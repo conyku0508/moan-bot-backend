@@ -51,7 +51,6 @@ async function handleEvent(event) {
                     calendarFeedback = "\n📅 行事曆也預約成功囉！";
                 } catch (e) {
                     console.error("行事曆失敗詳情:", e);
-                    // 這裡會噴出具體是哪個變數出問題
                     calendarFeedback = `\n❌ 行事曆失敗：${e.message}`;
                 }
             }
@@ -79,25 +78,23 @@ async function handleEvent(event) {
 }
 
 async function createCalendarEvent(taskData) {
-    // 🛡️ 究極格式檢查
-    const rawKey = process.env.CALENDAR_PRIVATE_KEY;
-    const rawEmail = process.env.CALENDAR_EMAIL;
-    const rawCalId = process.env.MY_CALENDAR_ID;
+    const rawKey = process.env.CALENDAR_PRIVATE_KEY || "";
+    const rawEmail = process.env.CALENDAR_EMAIL || "";
+    const rawCalId = process.env.MY_CALENDAR_ID || "";
 
     if (!rawKey || rawKey.length < 10) throw new Error("私鑰變數為空或太短");
     if (!rawEmail) throw new Error("Email 變數為空");
 
-    // 這裡會把 \n 轉回換行，並殺失所有頭尾引號與空格
-    const cleanKey = rawKey.replace(/\\n/g, '\n').replace(/^["']|["']$/g, '').trim();
-    const cleanEmail = rawEmail.replace(/^["']|["']$/g, '').trim();
-    const cleanCalId = rawCalId.replace(/^["']|["']$/g, '').trim();
+    const cleanKey = rawKey.trim().replace(/^["']|["']$/g, '').replace(/\\n/g, '\n');
+    const cleanEmail = rawEmail.trim().replace(/^["']|["']$/g, '');
+    const cleanCalId = rawCalId.trim().replace(/^["']|["']$/g, '');
 
-    const auth = new google.auth.JWT(
-        cleanEmail,
-        null,
-        cleanKey,
-        ['https://www.googleapis.com/auth/calendar']
-    );
+    // 🏆 關鍵修復：最新版 GoogleAPI 必須使用「大括號物件」傳遞參數！
+    const auth = new google.auth.JWT({
+        email: cleanEmail,
+        key: cleanKey,
+        scopes: ['https://www.googleapis.com/auth/calendar']
+    });
 
     const calendar = google.calendar({ version: 'v3', auth });
     await calendar.events.insert({
