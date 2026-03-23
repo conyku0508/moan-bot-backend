@@ -4,7 +4,6 @@ const admin = require('firebase-admin');
 const axios = require('axios');
 const { google } = require('googleapis');
 
-// 1. 初始化 Firebase
 if (!admin.apps.length) {
     admin.initializeApp({ projectId: "moan-adtech-bot" });
 }
@@ -30,7 +29,6 @@ async function handleEvent(event) {
     const pendingRef = db.collection("pending_proposals").doc(userId);
     const pending = await pendingRef.get();
 
-    // --- 🎯 邏輯 A：確認指令 ---
     const confirmWords = ["好", "確認", "ok", "yes", "可以", "加進去"];
     if (pending.exists && confirmWords.includes(userMessage.toLowerCase())) {
         const data = pending.data();
@@ -56,12 +54,29 @@ async function handleEvent(event) {
             }
         }
         await pendingRef.delete();
-        return client.replyMessage(event.replyToken, { type: 'text', text: `✨ 任務已同步到儀表板。${calendarFeedback}` });
+        return client.replyMessage(event.replyToken, { type: 'text', text: `✨ 任務已同步到系統。${calendarFeedback}` });
     }
 
-    // --- 🎯 邏輯 B：AI 分析 ---
+    // --- 🎯 這裡換上了 5.0 高智商大腦指令 ---
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const prompt = `你是一位 Cony 的特助。目前的年份是 2026 年。嚴禁使用 Markdown 符號。分析訊息：『${userMessage}』。提議在該日期的早上 10 點預約。格式：『Cony，關於[任務]，我預計排在[日期]的早上 10 點，這樣可以嗎？』最後附上 JSON：[{"title": "任務名稱", "start": "2026-MM-DDT10:00:00", "end": "2026-MM-DDT11:00:00"}]`;
+    
+    // 喚醒記憶：如果資料庫裡有暫存，提醒 AI 這是上下文
+    const context = pending.exists && pending.data().tasks.length > 0 
+        ? `(背景提醒：Cony 正在針對稍早的任務「${pending.data().tasks[0].title}」進行修改，請保留這個任務名稱，並根據她的新指令調整時間。)` 
+        : "";
+
+    const prompt = `你是一位專業且精明的 Cony 專屬特助。目前年份是 2026 年。嚴禁使用 Markdown 符號。
+    請分析最新訊息：『${userMessage}』 ${context}
+
+    【排程規則 - 極度重要】：
+    1. 若 Cony 明確指定了「時間」（例如下午2點、15:00），請「絕對遵照」她指定的時間排程，不准擅自改成 10 點。
+    2. 只有當 Cony「只給日期，沒給時間」時，才主動提議排在該日期的「早上 10 點」。
+
+    【回覆語氣】：俐落、像真人對話。
+    若她有指定時間：『Cony，沒問題，已經幫妳把[任務]改排在[日期]的[時間]了，這樣可以嗎？』
+    若沒指定時間：『Cony，關於[任務]，預計幫妳排在[日期]的早上 10 點，這樣可以嗎？』
+
+    最後附上 JSON 格式：[{"title": "任務名稱", "start": "2026-MM-DDT時:分:00", "end": "2026-MM-DDT時:分:00"}]`;
 
     try {
         const response = await axios.post(geminiUrl, { contents: [{ parts: [{ text: prompt }] }] });
@@ -73,7 +88,7 @@ async function handleEvent(event) {
         const cleanMessage = aiResponseText.replace(/\[\s*\{[\s\S]*\}\s*\]/g, '').trim();
         return client.replyMessage(event.replyToken, { type: 'text', text: cleanMessage });
     } catch (e) {
-        return client.replyMessage(event.replyToken, { type: 'text', text: "大腦斷線中..." });
+        return client.replyMessage(event.replyToken, { type: 'text', text: "特助大腦短暫斷線，請再說一次。" });
     }
 }
 
@@ -89,7 +104,6 @@ async function createCalendarEvent(taskData) {
     const cleanEmail = rawEmail.trim().replace(/^["']|["']$/g, '');
     const cleanCalId = rawCalId.trim().replace(/^["']|["']$/g, '');
 
-    // 🏆 關鍵修復：最新版 GoogleAPI 必須使用「大括號物件」傳遞參數！
     const auth = new google.auth.JWT({
         email: cleanEmail,
         key: cleanKey,
