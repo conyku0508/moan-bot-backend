@@ -1,0 +1,14 @@
+{
+  "name": "moan-adtech-line-webhook",
+  "version": "2.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "@line/bot-sdk": "^7.5.0",
+    "axios": "^1.13.6",
+    "express": "^4.18.2",
+    "firebase-admin": "^11.5.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
