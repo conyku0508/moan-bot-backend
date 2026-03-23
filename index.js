@@ -4,6 +4,7 @@ const admin = require('firebase-admin');
 const axios = require('axios');
 const { google } = require('googleapis');
 
+// 1. 初始化 Firebase
 if (!admin.apps.length) {
     admin.initializeApp({ projectId: "moan-adtech-bot" });
 }
@@ -29,6 +30,7 @@ async function handleEvent(event) {
     const pendingRef = db.collection("pending_proposals").doc(userId);
     const pending = await pendingRef.get();
 
+    // --- 🎯 邏輯 A：確認指令 ---
     const confirmWords = ["好", "確認", "ok", "yes", "可以", "加進去"];
     if (pending.exists && confirmWords.includes(userMessage.toLowerCase())) {
         const data = pending.data();
@@ -48,17 +50,19 @@ async function handleEvent(event) {
                     await createCalendarEvent(t);
                     calendarFeedback = "\n📅 行事曆也預約成功囉！";
                 } catch (e) {
-                    console.error("Calendar Error:", e.message);
+                    console.error("行事曆失敗詳情:", e);
+                    // 這裡會噴出具體是哪個變數出問題
                     calendarFeedback = `\n❌ 行事曆失敗：${e.message}`;
                 }
             }
         }
         await pendingRef.delete();
-        return client.replyMessage(event.replyToken, { type: 'text', text: `✨ 任務已存入系統。${calendarFeedback}` });
+        return client.replyMessage(event.replyToken, { type: 'text', text: `✨ 任務已同步到儀表板。${calendarFeedback}` });
     }
 
+    // --- 🎯 邏輯 B：AI 分析 ---
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const prompt = `你是一位 Cony 的特助。目前的年份是 2026 年。嚴禁使用 Markdown 符號。分析訊息：『${userMessage}』。提議在該日期的早上 10 點預約。最後附上 JSON：[{"title": "任務名稱", "start": "2026-MM-DDT10:00:00", "end": "2026-MM-DDT11:00:00"}]`;
+    const prompt = `你是一位 Cony 的特助。目前的年份是 2026 年。嚴禁使用 Markdown 符號。分析訊息：『${userMessage}』。提議在該日期的早上 10 點預約。格式：『Cony，關於[任務]，我預計排在[日期]的早上 10 點，這樣可以嗎？』最後附上 JSON：[{"title": "任務名稱", "start": "2026-MM-DDT10:00:00", "end": "2026-MM-DDT11:00:00"}]`;
 
     try {
         const response = await axios.post(geminiUrl, { contents: [{ parts: [{ text: prompt }] }] });
@@ -75,25 +79,29 @@ async function handleEvent(event) {
 }
 
 async function createCalendarEvent(taskData) {
-    // 🔍 這裡就是「地毯式檢查」
-    if (!process.env.CALENDAR_PRIVATE_KEY) throw new Error("找不到變數 CALENDAR_PRIVATE_KEY");
-    if (!process.env.CALENDAR_EMAIL) throw new Error("找不到變數 CALENDAR_EMAIL");
-    if (!process.env.MY_CALENDAR_ID) throw new Error("找不到變數 MY_CALENDAR_ID");
+    // 🛡️ 究極格式檢查
+    const rawKey = process.env.CALENDAR_PRIVATE_KEY;
+    const rawEmail = process.env.CALENDAR_EMAIL;
+    const rawCalId = process.env.MY_CALENDAR_ID;
 
-    const key = process.env.CALENDAR_PRIVATE_KEY.trim().replace(/^["']|["']$/g, '').replace(/\\n/g, '\n');
-    const email = process.env.CALENDAR_EMAIL.trim().replace(/^["']|["']$/g, '');
-    const calId = process.env.MY_CALENDAR_ID.trim().replace(/^["']|["']$/g, '');
+    if (!rawKey || rawKey.length < 10) throw new Error("私鑰變數為空或太短");
+    if (!rawEmail) throw new Error("Email 變數為空");
+
+    // 這裡會把 \n 轉回換行，並殺失所有頭尾引號與空格
+    const cleanKey = rawKey.replace(/\\n/g, '\n').replace(/^["']|["']$/g, '').trim();
+    const cleanEmail = rawEmail.replace(/^["']|["']$/g, '').trim();
+    const cleanCalId = rawCalId.replace(/^["']|["']$/g, '').trim();
 
     const auth = new google.auth.JWT(
-        email,
+        cleanEmail,
         null,
-        key,
+        cleanKey,
         ['https://www.googleapis.com/auth/calendar']
     );
 
     const calendar = google.calendar({ version: 'v3', auth });
     await calendar.events.insert({
-        calendarId: calId,
+        calendarId: cleanCalId,
         resource: {
             summary: taskData.title,
             start: { dateTime: taskData.start, timeZone: 'Asia/Taipei' },
