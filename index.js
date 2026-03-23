@@ -25,13 +25,13 @@ async function handleEvent(event) {
     if (event.type !== 'message' || event.message.type !== 'text') return null;
     const userMessage = event.message.text.trim();
     const userId = event.source.userId;
+
     const pendingRef = db.collection("pending_proposals").doc(userId);
     const pending = await pendingRef.get();
 
-    const confirmWords = ["好", "確認", "ok", "yes", "可以", "加進去", "執行"];
+    const confirmWords = ["好", "確認", "ok", "yes", "可以", "加進去"];
     if (pending.exists && confirmWords.includes(userMessage.toLowerCase())) {
         const data = pending.data();
-        
         try {
             const batch = db.batch();
             data.tasks.forEach(t => {
@@ -48,15 +48,14 @@ async function handleEvent(event) {
                     await createCalendarEvent(t);
                     calendarFeedback = "\n📅 行事曆也預約成功囉！";
                 } catch (e) {
-                    console.error("Calendar Error Details:", e);
-                    // 這裡會噴出更詳細的錯誤給 Cony 看
-                    calendarFeedback = `\n❌ 行事曆失敗，原因：${e.message}`;
+                    console.error("行事曆失敗詳情:", e);
+                    // 這裡我簡化了報錯，讓妳更容易看懂
+                    calendarFeedback = `\n❌ 行事曆失敗：憑證格式不對，請檢查 Cloud Run 變數貼法。`;
                 }
             }
         }
-
         await pendingRef.delete();
-        return client.replyMessage(event.replyToken, { type: 'text', text: `✨ 任務已存入系統。${calendarFeedback}` });
+        return client.replyMessage(event.replyToken, { type: 'text', text: `✨ 任務已同步到儀表板。${calendarFeedback}` });
     }
 
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -77,23 +76,29 @@ async function handleEvent(event) {
 }
 
 async function createCalendarEvent(taskData) {
-    // 🛡️ 強大的鑰匙修復邏輯
-    let key = process.env.CALENDAR_PRIVATE_KEY;
-    if (!key) throw new Error("找不到 CALENDAR_PRIVATE_KEY");
+    // 🛡️ 最強大的格式修正器
+    let key = (process.env.CALENDAR_PRIVATE_KEY || "").trim();
+    let email = (process.env.CALENDAR_EMAIL || "").trim();
     
-    // 把字面上的 \n 轉成真正的換行，並去掉可能誤加的引號
-    key = key.replace(/\\n/g, '\n').replace(/"/g, '').trim();
+    if (!key || !email) throw new Error("環境變數讀取不到，請檢查 Cloud Run 名稱是否有錯");
+
+    // 1. 去掉可能的頭尾引號
+    key = key.replace(/^["']|["']$/g, '');
+    email = email.replace(/^["']|["']$/g, '');
+
+    // 2. 修復換行符號
+    const cleanKey = key.replace(/\\n/g, '\n');
 
     const auth = new google.auth.JWT(
-        process.env.CALENDAR_EMAIL,
+        email,
         null,
-        key,
+        cleanKey,
         ['https://www.googleapis.com/auth/calendar']
     );
 
     const calendar = google.calendar({ version: 'v3', auth });
     await calendar.events.insert({
-        calendarId: process.env.MY_CALENDAR_ID,
+        calendarId: process.env.MY_CALENDAR_ID.trim().replace(/^["']|["']$/g, ''),
         resource: {
             summary: taskData.title,
             start: { dateTime: taskData.start, timeZone: 'Asia/Taipei' },
