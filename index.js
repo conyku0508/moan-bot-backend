@@ -48,14 +48,14 @@ async function handleEvent(event) {
                     await createCalendarEvent(t);
                     calendarFeedback = "\n📅 行事曆也預約成功囉！";
                 } catch (e) {
-                    console.error("行事曆失敗詳情:", e);
-                    // 這裡我簡化了報錯，讓妳更容易看懂
-                    calendarFeedback = `\n❌ 行事曆失敗：憑證格式不對，請檢查 Cloud Run 變數貼法。`;
+                    console.error("行事曆詳細錯誤:", e);
+                    // 把錯誤直接噴在 LINE 上，我們直接看原因
+                    calendarFeedback = `\n❌ 行事曆失敗：${e.message}`;
                 }
             }
         }
         await pendingRef.delete();
-        return client.replyMessage(event.replyToken, { type: 'text', text: `✨ 任務已同步到儀表板。${calendarFeedback}` });
+        return client.replyMessage(event.replyToken, { type: 'text', text: `✨ 任務已存入系統。${calendarFeedback}` });
     }
 
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -76,29 +76,37 @@ async function handleEvent(event) {
 }
 
 async function createCalendarEvent(taskData) {
-    // 🛡️ 最強大的格式修正器
-    let key = (process.env.CALENDAR_PRIVATE_KEY || "").trim();
-    let email = (process.env.CALENDAR_EMAIL || "").trim();
-    
-    if (!key || !email) throw new Error("環境變數讀取不到，請檢查 Cloud Run 名稱是否有錯");
+    // 🛡️ 超強格式修復器
+    let key = process.env.CALENDAR_PRIVATE_KEY || "";
+    let email = process.env.CALENDAR_EMAIL || "";
+    let calId = process.env.MY_CALENDAR_ID || "";
 
-    // 1. 去掉可能的頭尾引號
-    key = key.replace(/^["']|["']$/g, '');
-    email = email.replace(/^["']|["']$/g, '');
+    // 排除常見的貼上錯誤 (引號、空格、字面上的 \n)
+    const cleanKey = key.trim().replace(/^["']|["']$/g, '').replace(/\\n/g, '\n');
+    const cleanEmail = email.trim().replace(/^["']|["']$/g, '');
+    const cleanCalId = calId.trim().replace(/^["']|["']$/g, '');
 
-    // 2. 修復換行符號
-    const cleanKey = key.replace(/\\n/g, '\n');
+    // 在日誌留下線索 (安全版)
+    console.log(`正在嘗試登入。Email開頭: ${cleanEmail.substring(0, 5)}...`);
+    console.log(`金鑰長度: ${cleanKey.length}`);
+
+    if (!cleanKey.includes("BEGIN PRIVATE KEY")) {
+        throw new Error("私鑰內容似乎不正確，沒看到 BEGIN PRIVATE KEY 字樣");
+    }
 
     const auth = new google.auth.JWT(
-        email,
+        cleanEmail,
         null,
         cleanKey,
         ['https://www.googleapis.com/auth/calendar']
     );
 
+    // 強制進行一次認證，提早抓出錯誤
+    await auth.authorize();
+
     const calendar = google.calendar({ version: 'v3', auth });
     await calendar.events.insert({
-        calendarId: process.env.MY_CALENDAR_ID.trim().replace(/^["']|["']$/g, ''),
+        calendarId: cleanCalId,
         resource: {
             summary: taskData.title,
             start: { dateTime: taskData.start, timeZone: 'Asia/Taipei' },
