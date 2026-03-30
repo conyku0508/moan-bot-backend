@@ -24,6 +24,20 @@ app.post('/callback', line.middleware(config), (req, res) => {
 });
 
 // ============================================
+// 工具：偵測訊息中是否包含日期
+// ============================================
+function containsDate(text) {
+    const patterns = [
+        /\d{1,2}\/\d{1,2}/,           // 3/31, 12/25
+        /\d{1,2}月\d{1,2}[日號]/,      // 3月31日
+        /\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/, // 2026-03-31, 2026/3/31
+        /明天|後天|大後天|下週|下禮拜|下星期|今天|今晚|明早|週[一二三四五六日]/,
+        /\d{1,2}\/\d{1,2}/,
+    ];
+    return patterns.some(p => p.test(text));
+}
+
+// ============================================
 // 主流程
 // ============================================
 async function handleEvent(event) {
@@ -34,7 +48,7 @@ async function handleEvent(event) {
     const pendingRef = db.collection("pending_proposals").doc(userId);
     const pending = await pendingRef.get();
 
-    // --- 快速指令攔截（不經過 AI）---
+    // --- 快速指令攔截 ---
     const confirmWords = ["好", "確認", "ok", "yes", "可以", "加進去", "執行", "對", "好的"];
     const cancelWords = ["不要", "取消", "算了", "不用", "不行"];
 
@@ -46,16 +60,22 @@ async function handleEvent(event) {
         return reply(event, '好，已經取消了。有需要再說！');
     }
 
-    // --- 第一層：關鍵字快速分流（不花 AI 額度）---
-    const queryKeywords = ["待辦", "有哪些", "什麼事", "to do", "todo", "任務清單", "還有什麼", "目前有什麼", "看一下任務", "列出"];
+    // --- 第一層：關鍵字快速分流（查詢）---
+    const queryKeywords = ["待辦", "有哪些", "什麼事", "todo", "任務清單", "還有什麼", "目前有什麼", "看一下任務", "列出"];
     const isQueryIntent = queryKeywords.some(kw => userMessage.includes(kw));
-
     if (isQueryIntent) {
         console.log(`[快速分流] "${userMessage}" => QUERY_TASKS`);
         return await handleQueryTasks(event);
     }
 
-    // --- 第二層：AI 意圖分類（處理模糊指令）---
+    // --- 第二層：日期偵測保險 ---
+    // 訊息中有日期 + 長度超過 5 字 => 幾乎確定是工作備忘，直接走新增
+    if (containsDate(userMessage) && userMessage.length > 5) {
+        console.log(`[日期偵測] "${userMessage}" => ADD_TASK (含日期)`);
+        return await handleAddTask(event, userId, userMessage, pendingRef, pending);
+    }
+
+    // --- 第三層：AI 意圖分類 ---
     const intent = await classifyIntent(userMessage);
     console.log(`[AI 分流] "${userMessage}" => ${intent}`);
 
@@ -75,18 +95,27 @@ async function handleEvent(event) {
 }
 
 // ============================================
-// 意圖分類器
+// 意圖分類器（強化版）
 // ============================================
 async function classifyIntent(message) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const prompt = `你是意圖分類器。只回覆一個分類代碼，不要回覆任何其他文字。
+    const prompt = `你是意圖分類器。只回覆一個分類代碼。
 
-分類：
-- QUERY_TASKS：查詢、列出、詢問待辦事項或任務
-- ADD_TASK：新增任務、安排行程、排時間、提醒
-- COMPLETE_TASK：標記完成、做完了
-- DELETE_TASK：刪除、移除任務
-- CHITCHAT：閒聊、其他
+分類規則：
+- ADD_TASK：任何看起來像工作事項、備忘錄、客戶回報、會議安排、提醒事項的訊息。就算沒有說「幫我安排」，只要內容是在描述一件需要記住或追蹤的事，就歸類為 ADD_TASK。包含客戶名稱、專案進度、交辦事項等都算。
+- QUERY_TASKS：查詢、列出待辦事項
+- COMPLETE_TASK：標記任務完成
+- DELETE_TASK：刪除任務
+- CHITCHAT：純聊天、打招呼、問非工作問題
+
+範例：
+「天狐宴告知強強客戶已修改頁面3/31」=> ADD_TASK
+「幫我排明天開會」=> ADD_TASK
+「A客戶的素材已經上線了記得追蹤」=> ADD_TASK
+「KPI報告要在週五前交」=> ADD_TASK
+「待辦有哪些」=> QUERY_TASKS
+「今天好累」=> CHITCHAT
+「你好」=> CHITCHAT
 
 訊息：「${message}」
 代碼：`;
@@ -106,7 +135,7 @@ async function classifyIntent(message) {
 }
 
 // ============================================
-// 查詢待辦 — 100% 基於真實資料，禁止 AI 幻覺
+// 查詢待辦 — 純資料庫，零 AI 幻覺
 // ============================================
 async function handleQueryTasks(event) {
     try {
@@ -117,10 +146,9 @@ async function handleQueryTasks(event) {
             .get();
 
         if (snapshot.empty) {
-            return reply(event, 'Cony，妳目前沒有任何待辦事項，清單是空的！想新增的話直接告訴我就好。');
+            return reply(event, 'Cony，目前沒有任何待辦事項，清單是空的！想新增直接跟我說。');
         }
 
-        // 純粹用資料庫的真實資料組成回覆，完全不經過 AI
         let msg = 'Cony，以下是妳目前的待辦事項：\n';
         let index = 1;
         snapshot.forEach(doc => {
@@ -132,64 +160,57 @@ async function handleQueryTasks(event) {
                     hour: '2-digit', minute: '2-digit'
                 })
                 : '時間未記錄';
-            msg += `\n${index}. ${d.text}\n   建立時間：${dateStr}\n`;
+            msg += `\n${index}. ${d.text}\n   建立：${dateStr}\n`;
             index++;
         });
-        msg += `\n共 ${index - 1} 項。要完成或刪除哪項的話，直接跟我說。`;
-
+        msg += `\n共 ${index - 1} 項。要完成或刪除哪項直接說。`;
         return reply(event, msg);
     } catch (e) {
         console.error("查詢錯誤:", e);
-        // 如果是索引問題，嘗試不排序的備用查詢
         try {
-            const fallback = await db.collection("chat_logs")
-                .where("status", "==", "active")
-                .get();
-
-            if (fallback.empty) {
-                return reply(event, 'Cony，目前沒有待辦事項。');
-            }
-
-            let msg = 'Cony，以下是目前的待辦：\n';
+            const fallback = await db.collection("chat_logs").where("status", "==", "active").get();
+            if (fallback.empty) return reply(event, 'Cony，目前沒有待辦事項。');
+            let msg = 'Cony，目前的待辦：\n';
             let i = 1;
-            fallback.forEach(doc => {
-                msg += `\n${i}. ${doc.data().text}`;
-                i++;
-            });
+            fallback.forEach(doc => { msg += `\n${i}. ${doc.data().text}`; i++; });
             return reply(event, msg);
         } catch (e2) {
-            console.error("備用查詢也失敗:", e2);
-            return reply(event, '查詢待辦時遇到問題，請稍後再試。');
+            return reply(event, '查詢時遇到問題，請稍後再試。');
         }
     }
 }
 
 // ============================================
-// 新增任務
+// 新增任務（強化版：能處理工作備忘錄式的訊息）
 // ============================================
 async function handleAddTask(event, userId, userMessage, pendingRef, pending) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
     const now = new Date();
     const todayStr = now.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+    const year = now.toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei', year: 'numeric' }).replace(/[^0-9]/g, '');
 
     const context = pending.exists && pending.data().tasks?.length > 0
         ? `【背景】Cony 正在修改先前的任務「${pending.data().tasks[0].title}」，請根據新指令更新。`
         : "";
 
-    const prompt = `你是 Cony 的特助，說話精簡自然。嚴禁使用 Markdown 符號。
-現在台灣時間：${todayStr}。
+    const prompt = `你是 Cony 的專屬特助，說話精簡自然。嚴禁使用任何 Markdown 符號。
+現在台灣時間：${todayStr}，年份是 ${year} 年。
 
-Cony 說：「${userMessage}」
+Cony 傳了一則工作訊息：「${userMessage}」
 ${context}
 
-規則：
-1. 擷取真正的任務名稱。
-2. 有指定時間就遵照，只說日期就預設 10:00，都沒說就排今天 10:00。
-3. end = start + 1小時。
-4. 用一句話自然回覆，最後問「確認嗎？」
+你的任務：
+1. 把這則訊息整理成一條清楚的待辦事項標題。保留關鍵資訊（客戶名、事項、數據等），但讓它讀起來像一條待辦。
+2. 判斷時間：
+   - 如果訊息中有明確日期（如 3/31、明天、週五），用那個日期，時間預設 10:00
+   - 如果有明確時間（如下午2點），遵照那個時間
+   - 如果完全沒提到日期，就排在今天 10:00
+3. end = start + 1小時
+4. 用一句話自然回覆確認，例如：
+   「收到，已幫妳把『強強客戶頁面品牌字成效追蹤』排在 3/31 早上10點，確認嗎？」
 
-最後一行附上 JSON（不要用 code block）：
-[{"title": "任務名稱", "start": "YYYY-MM-DDTHH:mm:00", "end": "YYYY-MM-DDTHH:mm:00"}]`;
+最後一行附上 JSON（不要用 code block 包起來）：
+[{"title": "整理過的待辦標題", "start": "${year}-MM-DDTHH:mm:00", "end": "${year}-MM-DDTHH:mm:00"}]`;
 
     try {
         const res = await axios.post(url, { contents: [{ parts: [{ text: prompt }] }] });
@@ -230,7 +251,7 @@ ${context}
 // ============================================
 async function handleCompleteTask(event, userMessage) {
     const snapshot = await db.collection("chat_logs").where("status", "==", "active").get();
-    if (snapshot.empty) return reply(event, 'Cony，目前沒有待辦可以完成。');
+    if (snapshot.empty) return reply(event, '目前沒有待辦可以完成。');
 
     const tasks = [];
     snapshot.forEach(doc => tasks.push({ id: doc.id, text: doc.data().text }));
@@ -267,7 +288,7 @@ ${tasks.map((t, i) => `${i + 1}. [${t.id}] ${t.text}`).join('\n')}
 // ============================================
 async function handleDeleteTask(event, userMessage) {
     const snapshot = await db.collection("chat_logs").where("status", "==", "active").get();
-    if (snapshot.empty) return reply(event, 'Cony，目前沒有待辦可以刪除。');
+    if (snapshot.empty) return reply(event, '目前沒有待辦可以刪除。');
 
     const tasks = [];
     snapshot.forEach(doc => tasks.push({ id: doc.id, text: doc.data().text }));
@@ -297,15 +318,14 @@ ${tasks.map((t, i) => `${i + 1}. [${t.id}] ${t.text}`).join('\n')}
 }
 
 // ============================================
-// 閒聊
+// 閒聊（加防幻覺鎖）
 // ============================================
 async function handleChitchat(event, userMessage) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const prompt = `你是 Cony 的業務特助，精明溫暖。嚴禁 Markdown 符號。
-Cony 是數位廣告行銷副理。
-簡短自然地回應，不要每次都問「需要幫忙嗎」。
-重要：你不知道 Cony 的待辦事項內容，如果她問待辦相關問題，告訴她說「讓我幫妳查一下」然後請她再輸入一次「待辦有哪些」。
-絕對不要自己編造任何任務內容。
+    const prompt = `你是 Cony 的業務特助，精明溫暖幽默。嚴禁 Markdown 符號。
+Cony 是數位廣告行銷副理。簡短自然地回應。
+重要：你完全不知道 Cony 的待辦事項內容。如果她的訊息看起來像工作事項或備忘錄，回覆「這看起來像一條待辦，要我幫妳記下來嗎？加上日期我就能幫妳排進行事曆喔。」
+絕對不要自己編造任何任務或待辦內容。
 
 Cony 說：「${userMessage}」`;
 
@@ -318,7 +338,7 @@ Cony 說：「${userMessage}」`;
 }
 
 // ============================================
-// 確認執行
+// 確認執行（寫 DB + 行事曆）
 // ============================================
 async function executeConfirmedTasks(event, pendingRef, data) {
     try {
@@ -377,11 +397,9 @@ async function createCalendarEvent(taskData) {
     });
 }
 
-// 工具函數
 function reply(event, text) {
     return client.replyMessage(event.replyToken, { type: 'text', text });
 }
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`伺服器在 ${PORT} 啟動`));
-
