@@ -248,6 +248,10 @@ async function handleDirectMessage(event, userId, overrideText) {
     } catch (e) { }
     const user = await getOrCreateUser(userId, displayName);
 
+    console.log('=== 收到訊息 ===');
+    console.log('使用者:', displayName, 'ID:', userId);
+    console.log('訊息:', msg);
+
     // ===== 綁定信箱 =====
     if (msg.startsWith('綁定 ') || msg.startsWith('綁定')) {
         const email = msg.replace('綁定', '').trim();
@@ -315,6 +319,7 @@ async function handleDirectMessage(event, userId, overrideText) {
 
     // ===== AI 意圖分類 =====
     const intent = await classifyIntent(msg);
+    console.log('AI 意圖分類結果:', intent);
     switch (intent) {
         case 'QUERY_TASKS': return await handleQueryTasks(event, userId, displayName);
         case 'ADD_TASK': return await handleAddTask(event, userId, msg, pendingRef);
@@ -394,6 +399,9 @@ async function classifyIntent(message) {
 // ========== 查詢待辦 ==========
 async function handleQueryTasks(event, userId, displayName) {
     try {
+        console.log('=== 查詢待辦開始 ===');
+        console.log('查詢 ownerId:', userId);
+
         let snap;
         try {
             snap = await db.collection('chat_logs')
@@ -402,15 +410,20 @@ async function handleQueryTasks(event, userId, displayName) {
                 .orderBy('timestamp', 'desc')
                 .limit(20)
                 .get();
+            console.log('排序查詢成功，筆數:', snap.size);
         } catch (indexErr) {
             console.log('索引降級查詢:', indexErr.message);
             snap = await db.collection('chat_logs')
                 .where('ownerId', '==', userId)
                 .where('status', '==', 'active')
                 .get();
+            console.log('降級查詢筆數:', snap.size);
         }
 
-        if (snap.empty) return reply(event, `${displayName}，你目前沒有任何待辦事項，清單是空的！`);
+        if (snap.empty) {
+            console.log('查詢結果為空');
+            return reply(event, `${displayName}，你目前沒有任何待辦事項，清單是空的！`);
+        }
 
         let text = `${displayName}，以下是你目前的待辦事項：\n`;
         let i = 1;
@@ -428,7 +441,7 @@ async function handleQueryTasks(event, userId, displayName) {
         text += `\n\n共 ${i - 1} 項。完成或刪除直接跟我說。`;
         return reply(event, text);
     } catch (e) {
-        console.error('查詢待辦錯誤:', e.message);
+        console.error('查詢待辦錯誤:', e.message, e.stack);
         return reply(event, '查詢待辦時遇到問題，請稍後再試。');
     }
 }
@@ -590,11 +603,9 @@ async function handleCompleteTask(event, msg, userId) {
             const text = d.text || '';
             let score = 0;
 
-            // 完整包含
             if (text.includes(msgClean) || msgClean.includes(text)) {
                 score = 100;
             } else {
-                // 逐字比對
                 for (const char of msgClean) {
                     if (text.includes(char)) score += 10;
                 }
@@ -608,7 +619,6 @@ async function handleCompleteTask(event, msg, userId) {
             }
         });
 
-        // 如果關鍵字比對有明確結果
         if (bestMatch && bestScore >= 20) {
             console.log('關鍵字比對成功:', bestMatch.text, '分數:', bestScore);
             await db.collection('chat_logs').doc(bestMatch.id).update({
@@ -618,7 +628,7 @@ async function handleCompleteTask(event, msg, userId) {
             return reply(event, `「${bestMatch.text}」已標記為完成！`);
         }
 
-        // 關鍵字比對不到，用 AI 判斷
+        // 關鍵字比對不到，用 AI
         console.log('關鍵字比對失敗，嘗試 AI 判斷');
         let taskList = '';
         const taskMap = {};
@@ -653,7 +663,6 @@ ${taskList}
             console.error('AI 判斷失敗:', aiErr.message);
         }
 
-        // AI 也判斷不了，列出清單
         let listText = '我不確定你要完成哪一項，以下是你的待辦：\n';
         let i = 1;
         for (const [id, text] of Object.entries(taskMap)) {
@@ -679,7 +688,6 @@ async function handleDeleteTask(event, msg, userId) {
 
         if (snap.empty) return reply(event, '你目前沒有任何待辦事項可以刪除。');
 
-        // 跟完成一樣的邏輯：先關鍵字比對
         let bestMatch = null;
         let bestScore = 0;
         const msgClean = msg.replace(/刪除|移除|拿掉|去掉|那個|那筆|的/g, '').trim();
@@ -710,7 +718,6 @@ async function handleDeleteTask(event, msg, userId) {
             return reply(event, `「${bestMatch.text}」已刪除！`);
         }
 
-        // AI 判斷
         let taskList = '';
         snap.forEach(doc => {
             taskList += `ID:${doc.id} 標題:${doc.data().text}\n`;
