@@ -27,18 +27,12 @@ app.post('/callback', line.middleware(config), (req, res) => {
         .catch(e => { console.error("Webhook Error:", e); res.status(500).end(); });
 });
 
-// ============================================
-// 權限常數
-// ============================================
 const ROLES = {
     ADMIN: 'admin',
     MANAGER: 'manager',
     MEMBER: 'member'
 };
 
-// ============================================
-// 使用說明（根據角色顯示）
-// ============================================
 function getHelpText(role) {
     let text = `【團隊業務助理 使用說明】
 
@@ -98,9 +92,6 @@ function getHelpText(role) {
     return text;
 }
 
-// ============================================
-// 工具函數
-// ============================================
 function containsDate(text) {
     const patterns = [
         /\d{1,2}\/\d{1,2}/,
@@ -163,9 +154,6 @@ function canViewOthers(role) {
     return role === ROLES.ADMIN || role === ROLES.MANAGER;
 }
 
-// ============================================
-// 主流程
-// ============================================
 async function handleEvent(event) {
     if (event.type !== 'message' || event.message.type !== 'text') return null;
     const rawText = event.message.text.trim();
@@ -184,16 +172,12 @@ async function handleEvent(event) {
     return await handleDirectMessage(event, rawText, userId);
 }
 
-// ============================================
-// 群組訊息
-// ============================================
 async function handleGroupMessage(event, rawText, groupId, userId) {
     const botUserId = BOT_USER_ID_CACHE || process.env.BOT_USER_ID || '';
     const mention = event.message.mention;
     const isMentioned = mention && mention.mentionees &&
         mention.mentionees.some(m => m.type === 'user' && m.userId === botUserId);
 
-    // 沒被 @ => 靜默記錄
     if (!isMentioned) {
         try {
             let senderName = '未知';
@@ -209,7 +193,6 @@ async function handleGroupMessage(event, rawText, groupId, userId) {
         return null;
     }
 
-    // 被 @ => 處理指令
     let command = rawText.replace(/@\S+/g, '').trim();
 
     const summarizeKeywords = ["整理", "摘要", "總結", "討論了什麼", "剛剛聊什麼"];
@@ -220,9 +203,6 @@ async function handleGroupMessage(event, rawText, groupId, userId) {
     return await handleDirectMessage(event, command, userId);
 }
 
-// ============================================
-// 群組討論整理
-// ============================================
 async function handleGroupSummary(event, groupId) {
     try {
         const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -251,9 +231,6 @@ async function handleGroupSummary(event, groupId) {
     }
 }
 
-// ============================================
-// 一對一 / 指令處理
-// ============================================
 async function handleDirectMessage(event, userMessage, userId) {
     const displayName = await getDisplayName(event);
     const userData = await getOrCreateUser(userId, displayName);
@@ -262,7 +239,6 @@ async function handleDirectMessage(event, userMessage, userId) {
     const pendingRef = db.collection("pending_proposals").doc(userId);
     const pending = await pendingRef.get();
 
-    // --- 確認 / 取消 ---
     const confirmWords = ["好", "確認", "ok", "yes", "可以", "加進去", "執行", "對", "好的"];
     const cancelWords = ["不要", "取消", "算了", "不用", "不行"];
 
@@ -274,26 +250,22 @@ async function handleDirectMessage(event, userMessage, userId) {
         return reply(event, '好，已取消。');
     }
 
-    // --- 管理員指令 ---
     if (isAdmin(userId)) {
         const adminResult = await handleAdminCommands(event, userMessage);
         if (adminResult) return adminResult;
     }
 
-    // --- 綁定 Email ---
     const bindMatch = userMessage.match(/^綁定\s+(\S+@\S+\.\S+)$/);
     if (bindMatch) {
         await db.collection("users").doc(userId).update({ email: bindMatch[1] });
         return reply(event, `綁定成功！行事曆信箱：${bindMatch[1]}`);
     }
 
-    // --- 使用說明 ---
     const helpKeywords = ["怎麼用", "怎麼使用", "要怎麼用", "使用說明", "help", "功能", "你會什麼"];
     if (helpKeywords.some(kw => userMessage.includes(kw))) {
         return reply(event, getHelpText(userRole));
     }
 
-    // --- 查看別人的待辦（主管/管理員）---
     const viewOtherMatch = userMessage.match(/查看\s*(.+?)\s*的?\s*待辦/);
     if (viewOtherMatch) {
         const targetName = viewOtherMatch[1].trim();
@@ -311,30 +283,27 @@ async function handleDirectMessage(event, userMessage, userId) {
         return await handleViewOtherTasks(event, targetName);
     }
 
-    // --- 查詢自己的待辦 ---
+    // 重要：日期偵測要放在查詢關鍵字之前
+    // 這樣「測試待辦 4/2」會被當成新增任務，不會被「待辦」關鍵字攔截到查詢
+    if (containsDate(userMessage) && userMessage.length > 5) {
+        return await handleAddTask(event, userId, userMessage, pendingRef, pending, userData);
+    }
+
     const queryKeywords = ["待辦", "有哪些", "什麼事", "todo", "任務清單", "還有什麼", "目前有什麼", "列出"];
     if (queryKeywords.some(kw => userMessage.includes(kw))) {
         return await handleQueryTasks(event, userId, displayName);
     }
 
-    // --- 完成任務 ---
     const completeKeywords = ["完成", "做完", "做好了", "搞定", "結束了", "已完成", "處理好"];
     if (completeKeywords.some(kw => userMessage.includes(kw))) {
         return await handleCompleteTask(event, userMessage, userId);
     }
 
-    // --- 刪除任務 ---
     const deleteKeywords = ["刪除", "刪掉", "移除", "拿掉"];
     if (deleteKeywords.some(kw => userMessage.includes(kw))) {
         return await handleDeleteTask(event, userMessage, userId);
     }
 
-    // --- 日期偵測 ---
-    if (containsDate(userMessage) && userMessage.length > 5) {
-        return await handleAddTask(event, userId, userMessage, pendingRef, pending, userData);
-    }
-
-    // --- AI 分類 ---
     const intent = await classifyIntent(userMessage);
     console.log(`[AI] "${userMessage}" => ${intent}`);
 
@@ -347,9 +316,6 @@ async function handleDirectMessage(event, userMessage, userId) {
     }
 }
 
-// ============================================
-// 管理員指令
-// ============================================
 async function handleAdminCommands(event, message) {
     if (message === '停用系統') {
         systemEnabled = false;
@@ -396,9 +362,6 @@ async function handleAdminCommands(event, message) {
     return null;
 }
 
-// ============================================
-// 查看特定人的待辦
-// ============================================
 async function handleViewOtherTasks(event, targetName) {
     const targetUser = await findUserByName(targetName);
     if (!targetUser) return reply(event, `找不到「${targetName}」這位成員。`);
@@ -430,9 +393,6 @@ async function handleViewOtherTasks(event, targetName) {
     }
 }
 
-// ============================================
-// 查看所有人待辦
-// ============================================
 async function handleViewAllTasks(event) {
     try {
         const snapshot = await db.collection("chat_logs")
@@ -460,9 +420,6 @@ async function handleViewAllTasks(event) {
     }
 }
 
-// ============================================
-// 查詢自己的待辦
-// ============================================
 async function handleQueryTasks(event, userId, displayName) {
     try {
         const snapshot = await db.collection("chat_logs")
@@ -503,9 +460,6 @@ async function handleQueryTasks(event, userId, displayName) {
     }
 }
 
-// ============================================
-// 意圖分類器
-// ============================================
 async function classifyIntent(message) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
     const prompt = `意圖分類，只回覆代碼：
@@ -538,9 +492,6 @@ CHITCHAT：閒聊
     } catch (e) { return "CHITCHAT"; }
 }
 
-// ============================================
-// 新增任務
-// ============================================
 async function handleAddTask(event, userId, userMessage, pendingRef, pending, userData) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
     const now = new Date();
@@ -599,9 +550,6 @@ ${context}
     }
 }
 
-// ============================================
-// 確認執行
-// ============================================
 async function executeConfirmedTasks(event, pendingRef, data, userId, userData) {
     try {
         const batch = db.batch();
@@ -641,9 +589,6 @@ async function executeConfirmedTasks(event, pendingRef, data, userId, userData) 
     return reply(event, `搞定！任務已加入。${calMsg}`);
 }
 
-// ============================================
-// 標記完成
-// ============================================
 async function handleCompleteTask(event, userMessage, userId) {
     const snapshot = await db.collection("chat_logs")
         .where("status", "==", "active")
@@ -695,9 +640,6 @@ ${tasks.map((t, i) => `${i + 1}. [${t.id}] ${t.text}`).join('\n')}
     }
 }
 
-// ============================================
-// 刪除任務
-// ============================================
 async function handleDeleteTask(event, userMessage, userId) {
     const snapshot = await db.collection("chat_logs")
         .where("status", "==", "active")
@@ -733,9 +675,6 @@ ${tasks.map((t, i) => `${i + 1}. [${t.id}] ${t.text}`).join('\n')}
     }
 }
 
-// ============================================
-// 閒聊
-// ============================================
 async function handleChitchat(event, userMessage) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
     const prompt = `你是團隊業務特助，精明溫暖。嚴禁 Markdown 符號。
@@ -749,9 +688,6 @@ async function handleChitchat(event, userMessage) {
     } catch (e) { return reply(event, '恍神了，再說一次？'); }
 }
 
-// ============================================
-// Google Calendar
-// ============================================
 async function createCalendarEvent(taskData, userEmail) {
     const rawKey = process.env.CALENDAR_PRIVATE_KEY || "";
     const rawEmail = process.env.CALENDAR_EMAIL || "";
@@ -770,20 +706,13 @@ async function createCalendarEvent(taskData, userEmail) {
         scopes: ['https://www.googleapis.com/auth/calendar']
     });
 
-    const eventResource = {
-        summary: taskData.title,
-        start: { dateTime: taskData.start, timeZone: 'Asia/Taipei' },
-        end: { dateTime: taskData.end, timeZone: 'Asia/Taipei' },
-    };
-
-    if (userEmail && userEmail !== targetCalId) {
-        eventResource.attendees = [{ email: userEmail }];
-    }
-
     await google.calendar({ version: 'v3', auth }).events.insert({
         calendarId: targetCalId,
-        sendUpdates: userEmail ? 'all' : 'none',
-        resource: eventResource
+        resource: {
+            summary: taskData.title,
+            start: { dateTime: taskData.start, timeZone: 'Asia/Taipei' },
+            end: { dateTime: taskData.end, timeZone: 'Asia/Taipei' },
+        }
     });
 }
 
@@ -791,11 +720,7 @@ function reply(event, text) {
     return client.replyMessage(event.replyToken, { type: 'text', text });
 }
 
-// ============================================
-// 初始化
-// ============================================
 async function init() {
-    // 讀取系統狀態
     try {
         const c = await db.collection("system").doc("config").get();
         if (c.exists && c.data().enabled === false) {
@@ -804,14 +729,13 @@ async function init() {
         }
     } catch (e) { }
 
-    // 自動取得 Bot User ID
     if (!BOT_USER_ID_CACHE) {
         try {
             const botInfo = await client.getBotInfo();
             BOT_USER_ID_CACHE = botInfo.userId;
             console.log("Bot User ID:", BOT_USER_ID_CACHE);
         } catch (e) {
-            console.log("無法自動取得 Bot ID，群組 @ 功能可能受限:", e.message);
+            console.log("無法自動取得 Bot ID:", e.message);
         }
     }
 }
