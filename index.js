@@ -28,13 +28,18 @@ const ROLE_ADMIN = 'admin';
 const ROLE_MANAGER = 'manager';
 const ROLE_MEMBER = 'member';
 
-// ========== Google Calendar Service Account ==========
-function getCalendarAuth() {
-    const clientEmail = 'calendar-bot@moan-adtech-bot.iam.gserviceaccount.com';
-    const privateKey = "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDPpb1qweGUOqSx\nDyHG+LFCfafP8n6XeroRJAsb3GgVw+ydhmbdiIbVF3HfbSOFNrCzEr5RAMyEkyoE\nmdMCjxqDDT1Zzbixdc89/WjnYSFz9BX4dDhGVkFuL98J6wS+RqncT19/1ladMTbb\nf/HjoCh4Q6y8CmadaHRHPpQOWUeoR1OutUKCmj8vO2siSrqoGFI67h2KBFsOHDDs\ngT/F7RvowdSCnpeXfg3yBWBjOOo2vaRTuWsxL5O8+ZVBjxVa+fwZlTRYJcuQL7Ry\n3azZBUyImNWpyLAdjNdtKrHt7xT6gUg4vRyOzK/NqA/wMFo+JT9bsas/PZBOH2Gc\nfCq5BvFFAgMBAAECggEAKVIYhvGNA7PFySwzMwaTM6GQrttZIKi99SJAiatLFSW3\nZMN1ndkIx8fSE72Cp4QyFniA4dqwWCN25ZJ8wJIcmv6b+k5rVfkVJAdVBFI6V3o3\nkwkBl9GbVKN3FWCswXaLX7l1zhknhEFiYryrtHnPA9unuIWzVNiP5wuHZ/GRRmWL\nbK56yAL3y3v22Ce69STthjskXfmxzYgM1KIypdhsBY+nGMQpUdPhG0axv5GmCuh2\nmZIZcSPM6A/3VGjKq3RNWBnKInmtmWO4GipGcjXuPJFaTCOuhhw2N9n85aWNtL08\ntPXqT3/SEYtvM560KFRMkxMH1u43YMLI5WmyIMVvUQKBgQDuKoC9RHHq9jT0WSuN\n9tfG/xBNNm03IlOqn47l4duQjNIqcFFCTST+LRq9G5QLQcXEM63/O1+pmsIBbSh3\nNfyUZeM4dvDvAvdKN/dDI+LTU8DGD6Mya21kyfLcfupUHq3scKUm4Bus/J7ZruHF\nB2w7pC+Tzl0hrLBKQdyx2ydU3QKBgQDfMjbJ1rlbSlVg5/LbwwdtmYuw9L+hfMfS\nFkcOrdccCizgVFTFZ8TR37cFbEPg8DpDRhpC8HpbnYXw7PwOgnJ4baTs8jgg3wzT\n1v9UoCcqfdhKEbYFVzkgcm80PgEa6eu60xBtKO63KB9yjmoAAhize69M4iYA3LFR\njVCPZvSziQKBgQDZLPbCIBTFDgfRvTJDPREcS+AgmH3U5b9neiIDLAZcdJz8x/jB\nPbl68cRNJ0XDUhG1zO5gLFMaRJ2eUVyyAA+3foVJKuSe/pRjIE+f8KxYyimiMgY9\n5soVOzXzrOOfG267iSiAH6H9B0sO8zK6yP8AD8K2xFoWZ/NFc3N813uxHQKBgQCT\nt3oHT3NRdfrXretPgt4xrUOElBcX26ur4U6Z6nfJePqGZYnNNIZQmI1aq3KpNpR4\n3baXwuxYIgL5lv6i47a6+WYD47M+HiExOsO10GDbgHpbWylqk3Wdgd8TZk348AQx\nm2rts/95fLaDbLm+06RhdWRpr+qS+3znim1c2zjscQKBgQDPmwByw7rdXGEFRCci\nPhSW5n/nyYQOqjXdy4ORdp1yNxxV2040LY0BM6EwYNK28BtCc2JgT1hNk1cJ8qcu\n7W/u8qtB2bA+/ZwdLtIbwHMaioNTzBan+USwC5t2pJpO2o1A4R5AiV75us1jbW64\nAXslv3vtRfTAHMuKxO3tRFZ9EQ==\n-----END PRIVATE KEY-----\n";
-    const calendarId = process.env.MY_CALENDAR_ID || 'conyku0508@gmail.com';
+// ========== Google Calendar Service Account（Base64 解碼）==========
+const SA_BASE64 = 'eyJ0eXBlIjoic2VydmljZV9hY2NvdW50IiwicHJvamVjdF9pZCI6Im1vYW4tYWR0ZWNoLWJvdCIsInByaXZhdGVfa2V5X2lkIjoiODE5Mjg2M2M5OGY0MDE0ZDRkMjA3MDNkM2I4ZmFkNzEzZDljYTcyZSIsInByaXZhdGVfa2V5IjoiLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktrd2dnU2xBZ0VBQW9JQkFRRFBwYjFxd2VHVU9xU3gKRHlIRytMRkNmYWZQOG42WGVyb1JKQXNiM0dnVncreWRobWJkaUliVkYzSGZiU09GTnJDekVyNVJBTXlFa3lvRQptZE1DanhxRERUMVp6Yml4ZGM4OS9Xam5ZU0Z6OUJYNGREaEdWa0Z1TDk4SjZ3UytScW5jVDE5LzFsYWRNVGJiCmYvSGpvQ2g0UTZ5OENtYWRhSFJIUHBRT1dVZW9SMU91dFVLQ21qOHZPMnNpU3Jxb0dGSTY3aDJLQkZzT0hERHMKZ1QvRjdSdm93ZFNDbnBlWGZnM3lCV0JqT09vMnZhUlR1V3N4TDVPOCtaVkJqeFZhK2Z3WmxUUllKY3VRTDdSeQozYXpaQlV5SW1OV3B5TEFkak5kdEtySHQ3eFQ2Z1VnNHZSeU96Sy9OcUEvd01GbytKVDlic2FzL1BaQk9IMkdjCmZDcTVCdkZGQWdNQkFBRUNnZ0VBS1ZJWWh2R05BN1BGeVN3ek13YVRNNkdRcnR0WklLaTk5U0pBaWF0TEZTVzMKWk1OMW5ka0l4OGZTRTcyQ3A0UXlGbmlBNGRxd1dDTjI1Wko4d0pJY212NmIrazVyVmZrVkpBZFZCRkk2VjNvMwprd2tCbDlHYlZLTjNGV0Nzd1hhTFg3bDF6aGtuaEVGaVlyeXJ0SG5QQTl1bnVJV3pWTmlQNXd1SFovR1JSbVdMCmJLNTZ5QUwzeTN2MjJDZTY5U1R0aGpza1hmbXh6WWdNMUtJeXBkaHNCWStuR01RcFVkUGhHMGF4djVHbUN1aDIKbVpJWmNTUE02QS8zVkdqS3EzUk5XQm5LSW5tdG1XTzRHaXBHY2pYdVBKRmFUQ091aGh3Mk45bjg1YVdOdEwwOAp0UFhxVDMvU0VZdHZNNTYwS0ZSTWt4TUgxdTQzWU1MSTVXbXlJTVZ2VVFLQmdRRHVLb0M5UkhIcTlqVDBXU3VOCjl0ZkcveEJOTm0wM0lsT3FuNDdsNGR1UWpOSXFjRkZDVFNUK0xScTlHNVFMUWNYRU02My9PMStwbXNJQmJTaDMKTmZ5VVplTTRkdkR2QXZkS04vZERJK0xUVThER0Q2TXlhMjFreWZMY2Z1cFVIcTNzY0tVbTRCdXMvSjdacnVIRgpCMnc3cEMrVHpsMGhyTEJLUWR5eDJ5ZFUzUUtCZ1FEZk1qYkoxcmxiU2xWZzUvTGJ3d2R0bVl1dzlMK2hmTWZTCkZrY09yZGNjQ2l6Z1ZGVEZaOFRSMzdjRmJFUGc4RHBEUmhwQzhIcGJuWVh3N1B3T2duSjRiYVRzOGpnZzN3elQKMXY5VW9DY3FmZGhLRWJZRlZ6a2djbTgwUGdFYTZldTYweEJ0S082M0tCOXlqbW9BQWhpemU2OU00aVlBM0xGUgpqVkNQWnZTemlRS0JnUURaTFBiQ0lCVEZEZ2ZSdlRKRFBSRWNTK0FnbUgzVTViOW5laUlETEFaY2RKejh4L2pCClBibDY4Y1JOSjBYRFVoRzF6TzVnTEZNYVJKMmVVVnl5QUErM2ZvVkpLdVNlL3BSaklFK2Y4S3hZeWltaU1nWTkKNXNvVk96WHpyT09mRzI2N2lTaUFINkg5QjBzTzh6SzZ5UDhBRDhLMnhGb1daL05GYzNOODEzdXhIUUtCZ1FDVAp0M29IVDNOUmRmclhyZXRQZ3Q0eHJVT0VsQmNYMjZ1cjRVNlo2bmZKZVBxR1pZbk5OSVpRbUkxYXEzS3BOcFI0CjNiYVh3dXhZSWdMNWx2Nmk0N2E2K1dZRDQ3TStIaUV4T3NPMTBHRGJnSHBiV3lscWszV2RnZDhUWmszNDhBUXgKbTJydHMvOTVmTGFEYkxtKzA2UmhkV1JwcitxUyszem5pbTFjMnpqc2NRS0JnUURQbXdCeXc3cmRYR0VGUkNjaQpQaFNXNW4vbnlZUU9xalhkeTRPUmRwMXlOeHhWMjA0MExZMEJNNkV3WU5LMjhCdENjMkpnVDFoTmsxY0o4cWN1CjdXL3U4cXRCMmJBKy9ad2RMdElid0hNYWlvTlR6QmFuK1VTd0M1dDJwSnBPMm8xQTRSNUFpVjc1dXMxamJXNjQKQVhzbHYzdnRSZlRBSE11S3hPM3RSRlo5RVE9PQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCiIsImNsaWVudF9lbWFpbCI6ImNhbGVuZGFyLWJvdEBtb2FuLWFkdGVjaC1ib3QuaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLCJjbGllbnRfaWQiOiIxMDg5Nzg3NzM3NTYwMDg3OTQ4NzgiLCJhdXRoX3VyaSI6Imh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwidG9rZW5fdXJpIjoiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4ifQo=';
 
-    const auth = new google.auth.JWT(clientEmail, null, privateKey, ['https://www.googleapis.com/auth/calendar']);
+function getCalendarAuth() {
+    const sa = JSON.parse(Buffer.from(SA_BASE64, 'base64').toString('utf8'));
+    const auth = new google.auth.JWT(
+        sa.client_email,
+        null,
+        sa.private_key,
+        ['https://www.googleapis.com/auth/calendar']
+    );
+    const calendarId = process.env.MY_CALENDAR_ID || 'conyku0508@gmail.com';
     return { auth, calendarId };
 }
 
@@ -175,10 +180,10 @@ app.post('/webhook', line.middleware(LINE_CONFIG), async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('MoAn Bot is running! v4.0');
+    res.send('MoAn Bot is running! v4.1');
 });
 
-// ========== 私訊處理（加入白名單檢查）==========
+// ========== 私訊處理 ==========
 async function handlePrivateMessage(event, userId) {
     const msg = event.message.text.trim();
     let displayName = '未知';
@@ -196,7 +201,7 @@ async function handlePrivateMessage(event, userId) {
     await handleDirectMessage(event, userId, msg, user);
 }
 
-// ========== 群組訊息（不擋人）==========
+// ========== 群組訊息 ==========
 async function handleGroupMessage(event, groupId, userId) {
     const rawText = event.message.text.trim();
     const botId = BOT_USER_ID_CACHE;
@@ -453,24 +458,19 @@ async function handleAddTask(event, msg, userId, user) {
         }, { headers: { 'Content-Type': 'application/json' } });
 
         const aiText = response.data.candidates[0].content.parts[0].text.trim();
-        console.log('[ADD_TASK] Gemini 原始回傳:', aiText);
+        console.log('[ADD_TASK] Gemini 回傳:', aiText);
 
         const jsonMatch = aiText.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) {
-            console.error('[ADD_TASK] 無法從 Gemini 回傳中提取 JSON');
-            return reply(event, '我無法理解這個任務，請再說一次？');
-        }
+        if (!jsonMatch) return reply(event, '我無法理解這個任務，請再說一次？');
 
         const tasks = JSON.parse(jsonMatch[0]);
-        console.log('[ADD_TASK] 解析後的任務:', JSON.stringify(tasks));
+        console.log('[ADD_TASK] 解析結果:', JSON.stringify(tasks));
 
         if (!tasks || tasks.length === 0) return reply(event, '我無法理解這個任務，請再說一次？');
 
         if (event._isGroup) {
             let results = [];
             for (const task of tasks) {
-                console.log(`[ADD_TASK][群組] 處理任務: "${task.title}", start: ${task.start}, end: ${task.end}`);
-
                 const taskData = {
                     text: task.title,
                     ownerId: userId,
@@ -483,11 +483,9 @@ async function handleAddTask(event, msg, userId, user) {
                 if (task.end) taskData.scheduledEnd = task.end;
 
                 const docRef = await db.collection('chat_logs').add(taskData);
-                console.log(`[ADD_TASK][群組] 任務已寫入 Firestore, docId: ${docRef.id}`);
 
                 let calendarSynced = false;
                 if (task.start) {
-                    console.log(`[ADD_TASK][群組] 開始同步行事曆...`);
                     try {
                         const calId = await createCalendarEvent({
                             title: task.title,
@@ -497,10 +495,9 @@ async function handleAddTask(event, msg, userId, user) {
                         if (calId) {
                             await docRef.update({ calendarEventId: calId });
                             calendarSynced = true;
-                            console.log(`[ADD_TASK][群組] 行事曆同步成功！`);
                         }
                     } catch (calErr) {
-                        console.error('[ADD_TASK][群組] 行事曆同步失敗:', calErr.message);
+                        console.error('[ADD_TASK] 行事曆同步失敗:', calErr.message);
                     }
                 }
 
@@ -544,7 +541,7 @@ async function handleAddTask(event, msg, userId, user) {
 
         return reply(event, confirmText);
     } catch (err) {
-        console.error('[ADD_TASK] 新增待辦錯誤:', err.message, err.stack);
+        console.error('[ADD_TASK] 錯誤:', err.message, err.stack);
         return reply(event, '新增待辦時遇到問題，請稍後再試。');
     }
 }
@@ -553,15 +550,12 @@ async function handleAddTask(event, msg, userId, user) {
 async function handleConfirmOrCancel(event, userId, msg) {
     const pendingRef = db.collection('pending_proposals').doc(userId);
     const pendingDoc = await pendingRef.get();
-    if (!pendingDoc.exists) {
-        return reply(event, '目前沒有待確認的待辦事項。');
-    }
+    if (!pendingDoc.exists) return reply(event, '目前沒有待確認的待辦事項。');
     if (msg === '取消') {
         await pendingRef.delete();
         return reply(event, '已取消，待辦未建立。');
     }
-    const pending = pendingDoc.data();
-    return await executeConfirmedTasks(event, userId, pending);
+    return await executeConfirmedTasks(event, userId, pendingDoc.data());
 }
 
 // ========== 執行已確認的待辦 ==========
@@ -615,7 +609,7 @@ async function executeConfirmedTasks(event, userId, pending) {
         await db.collection('pending_proposals').doc(userId).delete();
         return reply(event, results.join('\n'));
     } catch (err) {
-        console.error('[CONFIRM] 執行待辦錯誤:', err.message);
+        console.error('[CONFIRM] 錯誤:', err.message);
         return reply(event, '建立待辦時遇到問題，請稍後再試。');
     }
 }
@@ -623,7 +617,6 @@ async function executeConfirmedTasks(event, userId, pending) {
 // ========== 修改任務 ==========
 async function handleModifyTask(event, msg, userId, userEmail) {
     try {
-        console.log('=== 修改任務開始 ===');
         const snap = await db.collection('chat_logs')
             .where('ownerId', '==', userId)
             .where('status', '==', 'active').get();
@@ -647,24 +640,16 @@ async function handleModifyTask(event, msg, userId, userEmail) {
 
         if (msgClean.length >= 2) {
             const exact = taskList.find(t => t.text.includes(msgClean) || msgClean.includes(t.text));
-            if (exact) {
-                targetDoc = exact.doc;
-                targetData = exact.doc.data();
-            }
+            if (exact) { targetDoc = exact.doc; targetData = exact.doc.data(); }
 
             if (!targetDoc) {
                 const listStr = taskList.map((t, i) => `${i + 1}. ID:${t.id} 標題:${t.text}`).join('\n');
                 const prompt = `使用者說：「${msg}」\n以下是他的待辦清單：\n${listStr}\n使用者想修改哪個任務的時間？只回覆該任務的 ID，如果無法判斷回覆 UNCLEAR。`;
                 try {
-                    const r = await axios.post(GEMINI_URL, {
-                        contents: [{ parts: [{ text: prompt }] }]
-                    }, { headers: { 'Content-Type': 'application/json' } });
+                    const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
                     const aiResult = r.data.candidates[0].content.parts[0].text.trim();
                     const matched = taskList.find(t => t.id === aiResult);
-                    if (aiResult !== 'UNCLEAR' && matched) {
-                        targetDoc = matched.doc;
-                        targetData = matched.doc.data();
-                    }
+                    if (aiResult !== 'UNCLEAR' && matched) { targetDoc = matched.doc; targetData = matched.doc.data(); }
                 } catch (e) {}
             }
 
@@ -680,10 +665,7 @@ async function handleModifyTask(event, msg, userId, userEmail) {
                     }
                     if (score > bestScore) { bestScore = score; best = t; }
                 });
-                if (best && bestScore >= 30) {
-                    targetDoc = best.doc;
-                    targetData = best.doc.data();
-                }
+                if (best && bestScore >= 30) { targetDoc = best.doc; targetData = best.doc.data(); }
             }
         }
 
@@ -691,17 +673,11 @@ async function handleModifyTask(event, msg, userId, userEmail) {
             const ctx = getContext(userId);
             if (ctx) {
                 const docSnap = await db.collection('chat_logs').doc(ctx.taskId).get();
-                if (docSnap.exists && docSnap.data().status === 'active') {
-                    targetDoc = docSnap;
-                    targetData = docSnap.data();
-                }
+                if (docSnap.exists && docSnap.data().status === 'active') { targetDoc = docSnap; targetData = docSnap.data(); }
             }
         }
 
-        if (!targetDoc && snap.size === 1) {
-            targetDoc = snap.docs[0];
-            targetData = targetDoc.data();
-        }
+        if (!targetDoc && snap.size === 1) { targetDoc = snap.docs[0]; targetData = targetDoc.data(); }
 
         if (!targetDoc) {
             let list = '你有多個待辦，請說清楚要改哪一個：\n';
@@ -711,37 +687,22 @@ async function handleModifyTask(event, msg, userId, userEmail) {
 
         const now = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
         const timePrompt = `現在台灣時間是 ${now}。使用者想修改任務「${targetData.text}」的時間。原本排程：${targetData.scheduledStart || '無'}。使用者說：「${msg}」\n請回傳 JSON {"start":"ISO 8601","end":"ISO 8601"}，時區用 +08:00。只回傳 JSON。`;
-        const rTime = await axios.post(GEMINI_URL, {
-            contents: [{ parts: [{ text: timePrompt }] }]
-        }, { headers: { 'Content-Type': 'application/json' } });
+        const rTime = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: timePrompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
         const aiTxt = rTime.data.candidates[0].content.parts[0].text.trim();
         const jsonMatch = aiTxt.match(/\{.*\}/s);
         const newTime = JSON.parse(jsonMatch[0]);
 
         await db.collection('chat_logs').doc(targetDoc.id).update({
-            scheduledStart: newTime.start,
-            scheduledEnd: newTime.end,
+            scheduledStart: newTime.start, scheduledEnd: newTime.end,
             lastModified: admin.firestore.FieldValue.serverTimestamp()
         });
 
         if (targetData.calendarEventId) {
-            try {
-                await updateCalendarEvent(targetData.calendarEventId, {
-                    title: targetData.text,
-                    start: newTime.start,
-                    end: newTime.end
-                });
-            } catch (e) {
-                console.error('行事曆更新失敗:', e.message);
-            }
+            try { await updateCalendarEvent(targetData.calendarEventId, { title: targetData.text, start: newTime.start, end: newTime.end }); } catch (e) {}
         }
 
         setContext(userId, targetDoc.id, targetData.text);
-
-        const st = new Date(newTime.start);
-        const timeStr = st.toLocaleString('zh-TW', {
-            timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
-        });
+        const timeStr = new Date(newTime.start).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         return reply(event, `「${targetData.text}」已改到 ${timeStr}，行事曆也同步更新了！`);
     } catch (e) {
         console.error('修改任務錯誤:', e.message, e.stack);
@@ -752,126 +713,67 @@ async function handleModifyTask(event, msg, userId, userEmail) {
 // ========== 完成任務 ==========
 async function handleCompleteTask(event, msg, userId) {
     try {
-        const snap = await db.collection('chat_logs')
-            .where('ownerId', '==', userId)
-            .where('status', '==', 'active').get();
+        const snap = await db.collection('chat_logs').where('ownerId', '==', userId).where('status', '==', 'active').get();
         if (snap.empty) return reply(event, '你目前沒有待辦事項可以完成。');
 
         const cleanMsg = msg.replace(/完成了?|做完了?|結案/g, '').trim();
         let targetDoc = null;
 
         if (cleanMsg.length >= 2) {
-            snap.forEach(doc => {
-                const text = doc.data().text || '';
-                if (text.includes(cleanMsg) || cleanMsg.includes(text)) targetDoc = doc;
-            });
-
+            snap.forEach(doc => { const text = doc.data().text || ''; if (text.includes(cleanMsg) || cleanMsg.includes(text)) targetDoc = doc; });
             if (!targetDoc) {
-                const taskList = [];
-                snap.forEach(doc => taskList.push({ id: doc.id, text: doc.data().text || '' }));
+                const taskList = []; snap.forEach(doc => taskList.push({ id: doc.id, text: doc.data().text || '' }));
                 const listStr = taskList.map((t, i) => `${i + 1}. ID:${t.id} 標題:${t.text}`).join('\n');
-                const prompt = `使用者說：「${msg}」\n以下是他的待辦清單：\n${listStr}\n使用者想完成哪個任務？只回覆 ID 或 UNCLEAR。`;
                 try {
-                    const r = await axios.post(GEMINI_URL, {
-                        contents: [{ parts: [{ text: prompt }] }]
-                    }, { headers: { 'Content-Type': 'application/json' } });
+                    const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: `使用者說：「${msg}」\n以下是他的待辦清單：\n${listStr}\n使用者想完成哪個任務？只回覆 ID 或 UNCLEAR。` }] }] }, { headers: { 'Content-Type': 'application/json' } });
                     const aiResult = r.data.candidates[0].content.parts[0].text.trim();
                     const matched = taskList.find(t => t.id === aiResult);
-                    if (aiResult !== 'UNCLEAR' && matched) {
-                        targetDoc = snap.docs.find(d => d.id === matched.id);
-                    }
+                    if (aiResult !== 'UNCLEAR' && matched) targetDoc = snap.docs.find(d => d.id === matched.id);
                 } catch (e) {}
             }
         }
 
-        if (!targetDoc) {
-            const ctx = getContext(userId);
-            if (ctx) {
-                const docSnap = await db.collection('chat_logs').doc(ctx.taskId).get();
-                if (docSnap.exists && docSnap.data().status === 'active') targetDoc = docSnap;
-            }
-        }
-
+        if (!targetDoc) { const ctx = getContext(userId); if (ctx) { const ds = await db.collection('chat_logs').doc(ctx.taskId).get(); if (ds.exists && ds.data().status === 'active') targetDoc = ds; } }
         if (!targetDoc && snap.size === 1) targetDoc = snap.docs[0];
-
-        if (!targetDoc) {
-            let list = '你有多個待辦，請說清楚要完成哪一個：\n';
-            snap.forEach((d, i) => { list += `${i + 1}. ${d.data().text}\n`; });
-            return reply(event, list);
-        }
+        if (!targetDoc) { let list = '你有多個待辦，請說清楚要完成哪一個：\n'; snap.forEach((d, i) => { list += `${i + 1}. ${d.data().text}\n`; }); return reply(event, list); }
 
         const taskData = targetDoc.data();
-        await db.collection('chat_logs').doc(targetDoc.id).update({
-            status: 'archived',
-            completedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-
+        await db.collection('chat_logs').doc(targetDoc.id).update({ status: 'archived', completedAt: admin.firestore.FieldValue.serverTimestamp() });
         return reply(event, `✅「${taskData.text}」已完成！做得好！`);
-    } catch (err) {
-        console.error('完成任務錯誤:', err.message);
-        return reply(event, '完成任務時遇到問題，請稍後再試。');
-    }
+    } catch (err) { console.error('完成任務錯誤:', err.message); return reply(event, '完成任務時遇到問題，請稍後再試。'); }
 }
 
 // ========== 刪除任務 ==========
 async function handleDeleteTask(event, msg, userId) {
     try {
-        const snap = await db.collection('chat_logs')
-            .where('ownerId', '==', userId)
-            .where('status', '==', 'active').get();
+        const snap = await db.collection('chat_logs').where('ownerId', '==', userId).where('status', '==', 'active').get();
         if (snap.empty) return reply(event, '你目前沒有待辦事項可以刪除。');
 
         const cleanMsg = msg.replace(/刪除|移除|取消任務/g, '').trim();
         let targetDoc = null;
 
         if (cleanMsg.length >= 2) {
-            snap.forEach(doc => {
-                const text = doc.data().text || '';
-                if (text.includes(cleanMsg) || cleanMsg.includes(text)) targetDoc = doc;
-            });
-
+            snap.forEach(doc => { const text = doc.data().text || ''; if (text.includes(cleanMsg) || cleanMsg.includes(text)) targetDoc = doc; });
             if (!targetDoc) {
-                const taskList = [];
-                snap.forEach(doc => taskList.push({ id: doc.id, text: doc.data().text || '' }));
+                const taskList = []; snap.forEach(doc => taskList.push({ id: doc.id, text: doc.data().text || '' }));
                 const listStr = taskList.map((t, i) => `${i + 1}. ID:${t.id} 標題:${t.text}`).join('\n');
-                const prompt = `使用者說：「${msg}」\n以下是他的待辦清單：\n${listStr}\n使用者想刪除哪個任務？只回覆 ID 或 UNCLEAR。`;
                 try {
-                    const r = await axios.post(GEMINI_URL, {
-                        contents: [{ parts: [{ text: prompt }] }]
-                    }, { headers: { 'Content-Type': 'application/json' } });
+                    const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: `使用者說：「${msg}」\n以下是他的待辦清單：\n${listStr}\n使用者想刪除哪個任務？只回覆 ID 或 UNCLEAR。` }] }] }, { headers: { 'Content-Type': 'application/json' } });
                     const aiResult = r.data.candidates[0].content.parts[0].text.trim();
                     const matched = taskList.find(t => t.id === aiResult);
-                    if (aiResult !== 'UNCLEAR' && matched) {
-                        targetDoc = snap.docs.find(d => d.id === matched.id);
-                    }
+                    if (aiResult !== 'UNCLEAR' && matched) targetDoc = snap.docs.find(d => d.id === matched.id);
                 } catch (e) {}
             }
         }
 
-        if (!targetDoc) {
-            const ctx = getContext(userId);
-            if (ctx) {
-                const docSnap = await db.collection('chat_logs').doc(ctx.taskId).get();
-                if (docSnap.exists && docSnap.data().status === 'active') targetDoc = docSnap;
-            }
-        }
-
+        if (!targetDoc) { const ctx = getContext(userId); if (ctx) { const ds = await db.collection('chat_logs').doc(ctx.taskId).get(); if (ds.exists && ds.data().status === 'active') targetDoc = ds; } }
         if (!targetDoc && snap.size === 1) targetDoc = snap.docs[0];
-
-        if (!targetDoc) {
-            let list = '你有多個待辦，請說清楚要刪除哪一個：\n';
-            snap.forEach((d, i) => { list += `${i + 1}. ${d.data().text}\n`; });
-            return reply(event, list);
-        }
+        if (!targetDoc) { let list = '你有多個待辦，請說清楚要刪除哪一個：\n'; snap.forEach((d, i) => { list += `${i + 1}. ${d.data().text}\n`; }); return reply(event, list); }
 
         const taskData = targetDoc.data();
         await db.collection('chat_logs').doc(targetDoc.id).delete();
-
         return reply(event, `🗑️「${taskData.text}」已刪除。`);
-    } catch (err) {
-        console.error('刪除任務錯誤:', err.message);
-        return reply(event, '刪除任務時遇到問題，請稍後再試。');
-    }
+    } catch (err) { console.error('刪除任務錯誤:', err.message); return reply(event, '刪除任務時遇到問題，請稍後再試。'); }
 }
 
 // ========== 共享檔案查詢 ==========
@@ -880,20 +782,14 @@ async function handleFileQuery(event, msg) {
         const keyword = msg.replace(/找檔案|查檔案|共享檔案|查報告|找報告/g, '').trim();
         const snap = await db.collection('shared_files').get();
         if (snap.empty) return reply(event, '目前沒有共享檔案。');
-
-        let files = [];
-        snap.forEach(d => files.push({ id: d.id, ...d.data() }));
-
+        let files = []; snap.forEach(d => files.push({ id: d.id, ...d.data() }));
         if (keyword) {
             files = files.filter(f => {
                 const tags = Array.isArray(f.tags) ? f.tags.join(' ') : (f.tags || '');
-                const haystack = ((f.name || '') + (f.category || '') + (f.description || '') + tags).toLowerCase();
-                return haystack.includes(keyword.toLowerCase());
+                return ((f.name || '') + (f.category || '') + (f.description || '') + tags).toLowerCase().includes(keyword.toLowerCase());
             });
         }
-
         if (files.length === 0) return reply(event, `找不到包含「${keyword}」的檔案。`);
-
         let text = `📁 共享檔案（${files.length} 筆）：\n\n`;
         files.slice(0, 10).forEach((f, i) => {
             text += `${i + 1}. ${f.name || '(無名稱)'}`;
@@ -903,35 +799,18 @@ async function handleFileQuery(event, msg) {
             if (f.url) text += `   🔗 ${f.url}\n`;
             text += '\n';
         });
-
         if (files.length > 10) text += `...還有 ${files.length - 10} 筆，請到後台查看完整清單。`;
-
         return reply(event, text.trim());
-    } catch (err) {
-        console.error('檔案查詢錯誤:', err.message);
-        return reply(event, '查詢檔案時遇到問題，請稍後再試。');
-    }
+    } catch (err) { console.error('檔案查詢錯誤:', err.message); return reply(event, '查詢檔案時遇到問題，請稍後再試。'); }
 }
 
 // ========== 閒聊 ==========
 async function handleChitchat(event, msg) {
     try {
-        const prompt = `你是一個名叫「業務助理」的 AI 助手，個性友善、專業、有效率。你主要幫助使用者管理待辦事項和工作任務。請用繁體中文回覆。
-
-使用者說：「${msg}」
-
-請自然地回覆，如果使用者似乎想新增任務，引導他說出任務內容和時間。回覆要簡短，不超過 100 字。`;
-
-        const response = await axios.post(GEMINI_URL, {
-            contents: [{ parts: [{ text: prompt }] }]
-        }, { headers: { 'Content-Type': 'application/json' } });
-
-        const aiReply = response.data.candidates[0].content.parts[0].text.trim();
-        return reply(event, aiReply);
-    } catch (err) {
-        console.error('閒聊錯誤:', err.message);
-        return reply(event, '嗨！有什麼我可以幫你的嗎？');
-    }
+        const prompt = `你是一個名叫「業務助理」的 AI 助手，個性友善、專業、有效率。你主要幫助使用者管理待辦事項和工作任務。請用繁體中文回覆。\n\n使用者說：「${msg}」\n\n請自然地回覆，如果使用者似乎想新增任務，引導他說出任務內容和時間。回覆要簡短，不超過 100 字。`;
+        const response = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
+        return reply(event, response.data.candidates[0].content.parts[0].text.trim());
+    } catch (err) { return reply(event, '嗨！有什麼我可以幫你的嗎？'); }
 }
 
 // ========== 管理員功能 ==========
@@ -939,12 +818,7 @@ async function handleMemberList(event) {
     const snap = await db.collection('users').get();
     if (snap.empty) return reply(event, '目前沒有成員。');
     let text = '👥 成員列表：\n\n';
-    snap.forEach(d => {
-        const data = d.data();
-        const role = data.role === 'admin' ? '👑' : data.role === 'manager' ? '⭐' : '👤';
-        const approved = data.approved ? '✅' : '⛔';
-        text += `${role} ${data.name || data.displayName || '未知'} ${approved}\n`;
-    });
+    snap.forEach(d => { const data = d.data(); const role = data.role === 'admin' ? '👑' : data.role === 'manager' ? '⭐' : '👤'; text += `${role} ${data.name || data.displayName || '未知'} ${data.approved ? '✅' : '⛔'}\n`; });
     return reply(event, text.trim());
 }
 
@@ -953,9 +827,7 @@ async function handleSetManager(event, msg) {
     const user = await findUserByName(name);
     if (!user) return reply(event, `找不到「${name}」這個成員。`);
     const snap = await db.collection('users').where('userId', '==', user.userId || user.odId).get();
-    if (!snap.empty) {
-        await snap.docs[0].ref.update({ role: ROLE_MANAGER });
-    }
+    if (!snap.empty) await snap.docs[0].ref.update({ role: ROLE_MANAGER });
     return reply(event, `已將「${name}」設定為主管。`);
 }
 
@@ -964,9 +836,7 @@ async function handleRemoveManager(event, msg) {
     const user = await findUserByName(name);
     if (!user) return reply(event, `找不到「${name}」這個成員。`);
     const snap = await db.collection('users').where('userId', '==', user.userId || user.odId).get();
-    if (!snap.empty) {
-        await snap.docs[0].ref.update({ role: ROLE_MEMBER });
-    }
+    if (!snap.empty) await snap.docs[0].ref.update({ role: ROLE_MEMBER });
     return reply(event, `已將「${name}」的主管權限移除。`);
 }
 
@@ -976,41 +846,33 @@ async function handleViewOtherTasks(event, msg) {
     const targetUser = await findUserByName(nameMatch[1]);
     if (!targetUser) return reply(event, `找不到「${nameMatch[1]}」這個成員。`);
     const targetId = targetUser.userId || targetUser.odId;
-    const snap = await db.collection('chat_logs')
-        .where('ownerId', '==', targetId)
-        .where('status', '==', 'active').get();
+    const snap = await db.collection('chat_logs').where('ownerId', '==', targetId).where('status', '==', 'active').get();
     if (snap.empty) return reply(event, `${nameMatch[1]} 目前沒有待辦事項。`);
-    let tasks = [];
-    snap.forEach(d => tasks.push(d.data()));
+    let tasks = []; snap.forEach(d => tasks.push(d.data()));
     let text = `📋 ${nameMatch[1]} 的待辦事項（${tasks.length} 筆）：\n\n`;
-    tasks.forEach((t, i) => {
-        text += `${i + 1}. ${t.text}\n`;
-    });
+    tasks.forEach((t, i) => { text += `${i + 1}. ${t.text}\n`; });
     return reply(event, text.trim());
 }
 
-// ========== Google Calendar（直接使用內建金鑰）==========
+// ========== Google Calendar ==========
 async function createCalendarEvent(eventData) {
     try {
-        console.log('[CALENDAR] createCalendarEvent 被呼叫');
+        console.log('[CALENDAR] 建立事件中...');
         const { auth, calendarId } = getCalendarAuth();
-
         const calendar = google.calendar({ version: 'v3', auth });
         const res = await calendar.events.insert({
-            calendarId: calendarId,
+            calendarId,
             requestBody: {
                 summary: eventData.title,
                 start: { dateTime: eventData.start, timeZone: 'Asia/Taipei' },
                 end: { dateTime: eventData.end, timeZone: 'Asia/Taipei' }
             }
         });
-        console.log('[CALENDAR] 行事曆事件已建立:', res.data.id);
+        console.log('[CALENDAR] 事件已建立:', res.data.id);
         return res.data.id;
     } catch (err) {
-        console.error('[CALENDAR] 建立行事曆事件失敗:', err.message);
-        if (err.response) {
-            console.error('[CALENDAR] API 回應:', JSON.stringify(err.response.data));
-        }
+        console.error('[CALENDAR] 建立失敗:', err.message);
+        if (err.response) console.error('[CALENDAR] API:', JSON.stringify(err.response.data));
         return null;
     }
 }
@@ -1020,57 +882,40 @@ async function updateCalendarEvent(eventId, eventData) {
         const { auth, calendarId } = getCalendarAuth();
         const calendar = google.calendar({ version: 'v3', auth });
         await calendar.events.update({
-            calendarId: calendarId,
-            eventId: eventId,
+            calendarId, eventId,
             requestBody: {
                 summary: eventData.title,
                 start: { dateTime: eventData.start, timeZone: 'Asia/Taipei' },
                 end: { dateTime: eventData.end, timeZone: 'Asia/Taipei' }
             }
         });
-        console.log('[CALENDAR] 行事曆事件已更新:', eventId);
-    } catch (err) {
-        console.error('[CALENDAR] 更新行事曆事件失敗:', err.message);
-    }
+        console.log('[CALENDAR] 事件已更新:', eventId);
+    } catch (err) { console.error('[CALENDAR] 更新失敗:', err.message); }
 }
 
-// ========== 回覆函式 ==========
+// ========== 回覆 ==========
 function reply(event, text) {
-    return client.replyMessage(event.replyToken, { type: 'text', text: text });
+    return client.replyMessage(event.replyToken, { type: 'text', text });
 }
 
-// ========== 系統初始化 ==========
+// ========== 初始化 ==========
 async function init() {
     if (!BOT_USER_ID_CACHE) {
-        try {
-            const res = await client.getBotInfo();
-            BOT_USER_ID_CACHE = res.userId;
-            console.log('Bot User ID:', BOT_USER_ID_CACHE);
-        } catch (e) {
-            console.error('取得 Bot 資訊失敗（不影響啟動）:', e.message);
-        }
+        try { const res = await client.getBotInfo(); BOT_USER_ID_CACHE = res.userId; console.log('Bot User ID:', BOT_USER_ID_CACHE); } catch (e) { console.error('取得 Bot 資訊失敗（不影響啟動）:', e.message); }
     }
-    try {
-        const doc = await db.collection('system').doc('config').get();
-        if (doc.exists && doc.data().enabled !== undefined) {
-            systemEnabled = doc.data().enabled;
-        }
-    } catch (e) {
-        console.error('讀取系統狀態失敗（不影響啟動）:', e.message);
-    }
+    try { const doc = await db.collection('system').doc('config').get(); if (doc.exists && doc.data().enabled !== undefined) systemEnabled = doc.data().enabled; } catch (e) {}
 
-    // 驗證行事曆連線
     try {
-        const { auth, calendarId } = getCalendarAuth();
+        const { auth } = getCalendarAuth();
         const calendar = google.calendar({ version: 'v3', auth });
-        const testResult = await calendar.calendarList.list({ maxResults: 1 });
-        console.log('[INIT] Google Calendar 連線成功！');
+        await calendar.calendarList.list({ maxResults: 1 });
+        console.log('[INIT] ✅ Google Calendar 連線成功！');
     } catch (e) {
-        console.error('[INIT] Google Calendar 連線失敗:', e.message);
+        console.error('[INIT] ❌ Google Calendar 連線失敗:', e.message);
     }
 }
 
-// ========== 啟動伺服器 ==========
+// ========== 啟動 ==========
 init().catch(err => {
     console.error('初始化錯誤（不影響啟動）:', err.message);
 }).then(() => {
