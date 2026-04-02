@@ -165,7 +165,7 @@ app.post('/webhook', line.middleware(LINE_CONFIG), async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('MoAn Bot is running! v3.6');
+    res.send('MoAn Bot is running! v3.8');
 });
 
 // ========== 私訊處理（加入白名單檢查）==========
@@ -418,7 +418,7 @@ async function handleQueryTasks(event, userId) {
     }
 }
 
-// ========== 新增待辦（群組直接建立，私聊需確認）==========
+// ========== 新增待辦（加入完整 debug log）==========
 async function handleAddTask(event, msg, userId, user) {
     try {
         const now = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
@@ -432,23 +432,36 @@ async function handleAddTask(event, msg, userId, user) {
 注意：
 - 如果使用者一次提到多個任務，分別列出
 - 時間請轉換為完整的 ISO 8601 格式（含時區 +08:00）
-- 如果沒有提到時間，start 和 end 設為 null
+- 如果只有日期沒有時間，預設用當天 09:00
+- end 預設為 start 的一小時後
+- 如果完全沒有提到時間或日期，start 和 end 設為 null
 - 只回傳 JSON，不要其他文字`;
 
+        console.log('[ADD_TASK] 呼叫 Gemini 解析任務...');
         const response = await axios.post(GEMINI_URL, {
             contents: [{ parts: [{ text: prompt }] }]
         }, { headers: { 'Content-Type': 'application/json' } });
 
         const aiText = response.data.candidates[0].content.parts[0].text.trim();
-        const jsonMatch = aiText.match(/\[.*\]/s);
-        if (!jsonMatch) return reply(event, '我無法理解這個任務，請再說一次？');
+        console.log('[ADD_TASK] Gemini 原始回傳:', aiText);
+
+        const jsonMatch = aiText.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) {
+            console.error('[ADD_TASK] 無法從 Gemini 回傳中提取 JSON');
+            return reply(event, '我無法理解這個任務，請再說一次？');
+        }
 
         const tasks = JSON.parse(jsonMatch[0]);
+        console.log('[ADD_TASK] 解析後的任務:', JSON.stringify(tasks));
+
         if (!tasks || tasks.length === 0) return reply(event, '我無法理解這個任務，請再說一次？');
 
+        // ===== 群組：直接建立 =====
         if (event._isGroup) {
             let results = [];
             for (const task of tasks) {
+                console.log(`[ADD_TASK][群組] 處理任務: "${task.title}", start: ${task.start}, end: ${task.end}`);
+
                 const taskData = {
                     text: task.title,
                     ownerId: userId,
@@ -461,29 +474,49 @@ async function handleAddTask(event, msg, userId, user) {
                 if (task.end) taskData.scheduledEnd = task.end;
 
                 const docRef = await db.collection('chat_logs').add(taskData);
+                console.log(`[ADD_TASK][群組] 任務已寫入 Firestore, docId: ${docRef.id}`);
 
-                try {
-                    if (task.start) {
+                // ===== 行事曆同步 =====
+                let calendarSynced = false;
+                if (task.start) {
+                    console.log(`[ADD_TASK][群組] 開始同步行事曆, start: ${task.start}, end: ${task.end || task.start}`);
+                    try {
                         const calId = await createCalendarEvent({
                             title: task.title,
                             start: task.start,
                             end: task.end || task.start
                         });
-                        if (calId) await docRef.update({ calendarEventId: calId });
+                        if (calId) {
+                            await docRef.update({ calendarEventId: calId });
+                            calendarSynced = true;
+                            console.log(`[ADD_TASK][群組] 行事曆同步成功, calendarEventId: ${calId}`);
+                        } else {
+                            console.warn('[ADD_TASK][群組] createCalendarEvent 回傳 null');
+                        }
+                    } catch (calErr) {
+                        console.error('[ADD_TASK][群組] 行事曆同步失敗:', calErr.message, calErr.stack);
                     }
-                } catch (calErr) {
-                    console.error('行事曆同步失敗:', calErr.message);
+                } else {
+                    console.log('[ADD_TASK][群組] 沒有 start 時間，跳過行事曆同步');
                 }
 
                 setContext(userId, docRef.id, task.title);
                 const timeStr = task.start ? new Date(task.start).toLocaleString('zh-TW', {
                     timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
                 }) : '';
-                results.push(`「${task.title}」已加入待辦${timeStr ? '，排程 ' + timeStr : ''}${task.start ? '，行事曆也同步好了！' : '！'}`);
+
+                let resultMsg = `「${task.title}」已加入待辦`;
+                if (timeStr) resultMsg += `，排程 ${timeStr}`;
+                if (calendarSynced) resultMsg += '，📅 行事曆已同步！';
+                else if (task.start) resultMsg += '（⚠️ 行事曆同步失敗）';
+                else resultMsg += '！';
+
+                results.push(resultMsg);
             }
             return reply(event, results.join('\n'));
         }
 
+        // ===== 私聊：需確認 =====
         const pendingRef = db.collection('pending_proposals').doc(userId);
         await pendingRef.set({
             tasks: tasks,
@@ -508,7 +541,7 @@ async function handleAddTask(event, msg, userId, user) {
 
         return reply(event, confirmText);
     } catch (err) {
-        console.error('新增待辦錯誤:', err.message, err.stack);
+        console.error('[ADD_TASK] 新增待辦錯誤:', err.message, err.stack);
         return reply(event, '新增待辦時遇到問題，請稍後再試。');
     }
 }
@@ -534,6 +567,8 @@ async function executeConfirmedTasks(event, userId, pending) {
         const tasks = pending.tasks;
         let results = [];
         for (const task of tasks) {
+            console.log(`[CONFIRM] 處理任務: "${task.title}", start: ${task.start}, end: ${task.end}`);
+
             const taskData = {
                 text: task.title,
                 ownerId: userId,
@@ -546,35 +581,52 @@ async function executeConfirmedTasks(event, userId, pending) {
             if (task.end) taskData.scheduledEnd = task.end;
 
             const docRef = await db.collection('chat_logs').add(taskData);
+            console.log(`[CONFIRM] 任務已寫入 Firestore, docId: ${docRef.id}`);
 
-            try {
-                if (task.start) {
+            let calendarSynced = false;
+            if (task.start) {
+                console.log(`[CONFIRM] 開始同步行事曆, start: ${task.start}`);
+                try {
                     const calId = await createCalendarEvent({
                         title: task.title,
                         start: task.start,
                         end: task.end || task.start
                     });
-                    if (calId) await docRef.update({ calendarEventId: calId });
+                    if (calId) {
+                        await docRef.update({ calendarEventId: calId });
+                        calendarSynced = true;
+                        console.log(`[CONFIRM] 行事曆同步成功, calendarEventId: ${calId}`);
+                    } else {
+                        console.warn('[CONFIRM] createCalendarEvent 回傳 null');
+                    }
+                } catch (calErr) {
+                    console.error('[CONFIRM] 行事曆同步失敗:', calErr.message, calErr.stack);
                 }
-            } catch (calErr) {
-                console.error('行事曆同步失敗:', calErr.message);
+            } else {
+                console.log('[CONFIRM] 沒有 start 時間，跳過行事曆同步');
             }
 
             setContext(userId, docRef.id, task.title);
             const timeStr = task.start ? new Date(task.start).toLocaleString('zh-TW', {
                 timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
             }) : '';
-            results.push(`「${task.title}」已加入待辦${timeStr ? '，行事曆也同步好了！' : '！'}`);
+
+            let resultMsg = `「${task.title}」已加入待辦`;
+            if (calendarSynced) resultMsg += '，📅 行事曆已同步！';
+            else if (task.start) resultMsg += `，排程 ${timeStr}（⚠️ 行事曆同步失敗）`;
+            else resultMsg += '！';
+
+            results.push(resultMsg);
         }
         await db.collection('pending_proposals').doc(userId).delete();
         return reply(event, results.join('\n'));
     } catch (err) {
-        console.error('執行待辦錯誤:', err.message);
+        console.error('[CONFIRM] 執行待辦錯誤:', err.message);
         return reply(event, '建立待辦時遇到問題，請稍後再試。');
     }
 }
 
-// ========== 修改任務（已修正匹配邏輯）==========
+// ========== 修改任務 ==========
 async function handleModifyTask(event, msg, userId, userEmail) {
     try {
         console.log('=== 修改任務開始 ===');
@@ -950,14 +1002,30 @@ async function handleViewOtherTasks(event, msg) {
     return reply(event, text.trim());
 }
 
-// ========== Google Calendar ==========
+// ========== Google Calendar（加入 debug log）==========
 async function createCalendarEvent(eventData) {
     try {
-        const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}');
+        console.log('[CALENDAR] createCalendarEvent 被呼叫, eventData:', JSON.stringify(eventData));
+        const keyStr = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}';
         const calendarId = process.env.MY_CALENDAR_ID;
-        if (!key.client_email || !calendarId) return null;
+        console.log(`[CALENDAR] calendarId: ${calendarId ? calendarId.substring(0, 20) + '...' : '(未設定)'}`);
+        console.log(`[CALENDAR] service account key 長度: ${keyStr.length}`);
+
+        if (!calendarId) {
+            console.error('[CALENDAR] MY_CALENDAR_ID 未設定！');
+            return null;
+        }
+
+        const key = JSON.parse(keyStr);
+        if (!key.client_email) {
+            console.error('[CALENDAR] GOOGLE_SERVICE_ACCOUNT_KEY 缺少 client_email！');
+            return null;
+        }
+
+        console.log(`[CALENDAR] client_email: ${key.client_email}`);
         const auth = new google.auth.JWT(key.client_email, null, key.private_key, ['https://www.googleapis.com/auth/calendar']);
         const calendar = google.calendar({ version: 'v3', auth });
+
         const res = await calendar.events.insert({
             calendarId: calendarId,
             requestBody: {
@@ -966,10 +1034,13 @@ async function createCalendarEvent(eventData) {
                 end: { dateTime: eventData.end, timeZone: 'Asia/Taipei' }
             }
         });
-        console.log('行事曆事件已建立:', res.data.id);
+        console.log('[CALENDAR] 行事曆事件已建立:', res.data.id);
         return res.data.id;
     } catch (err) {
-        console.error('建立行事曆事件失敗:', err.message);
+        console.error('[CALENDAR] 建立行事曆事件失敗:', err.message);
+        if (err.response) {
+            console.error('[CALENDAR] API 回應:', JSON.stringify(err.response.data));
+        }
         return null;
     }
 }
@@ -990,9 +1061,9 @@ async function updateCalendarEvent(eventId, eventData) {
                 end: { dateTime: eventData.end, timeZone: 'Asia/Taipei' }
             }
         });
-        console.log('行事曆事件已更新:', eventId);
+        console.log('[CALENDAR] 行事曆事件已更新:', eventId);
     } catch (err) {
-        console.error('更新行事曆事件失敗:', err.message);
+        console.error('[CALENDAR] 更新行事曆事件失敗:', err.message);
     }
 }
 
@@ -1020,6 +1091,10 @@ async function init() {
     } catch (e) {
         console.error('讀取系統狀態失敗（不影響啟動）:', e.message);
     }
+
+    // 啟動時檢查行事曆設定
+    console.log('[INIT] MY_CALENDAR_ID:', process.env.MY_CALENDAR_ID ? '已設定' : '❌ 未設定');
+    console.log('[INIT] GOOGLE_SERVICE_ACCOUNT_KEY:', process.env.GOOGLE_SERVICE_ACCOUNT_KEY ? `已設定 (${process.env.GOOGLE_SERVICE_ACCOUNT_KEY.length} chars)` : '❌ 未設定');
 }
 
 // ========== 啟動伺服器（即使 init 失敗也能啟動）==========
