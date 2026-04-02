@@ -28,6 +28,16 @@ const ROLE_ADMIN = 'admin';
 const ROLE_MANAGER = 'manager';
 const ROLE_MEMBER = 'member';
 
+// ========== Google Calendar Service Account ==========
+function getCalendarAuth() {
+    const clientEmail = 'calendar-bot@moan-adtech-bot.iam.gserviceaccount.com';
+    const privateKey = "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDPpb1qweGUOqSx\nDyHG+LFCfafP8n6XeroRJAsb3GgVw+ydhmbdiIbVF3HfbSOFNrCzEr5RAMyEkyoE\nmdMCjxqDDT1Zzbixdc89/WjnYSFz9BX4dDhGVkFuL98J6wS+RqncT19/1ladMTbb\nf/HjoCh4Q6y8CmadaHRHPpQOWUeoR1OutUKCmj8vO2siSrqoGFI67h2KBFsOHDDs\ngT/F7RvowdSCnpeXfg3yBWBjOOo2vaRTuWsxL5O8+ZVBjxVa+fwZlTRYJcuQL7Ry\n3azZBUyImNWpyLAdjNdtKrHt7xT6gUg4vRyOzK/NqA/wMFo+JT9bsas/PZBOH2Gc\nfCq5BvFFAgMBAAECggEAKVIYhvGNA7PFySwzMwaTM6GQrttZIKi99SJAiatLFSW3\nZMN1ndkIx8fSE72Cp4QyFniA4dqwWCN25ZJ8wJIcmv6b+k5rVfkVJAdVBFI6V3o3\nkwkBl9GbVKN3FWCswXaLX7l1zhknhEFiYryrtHnPA9unuIWzVNiP5wuHZ/GRRmWL\nbK56yAL3y3v22Ce69STthjskXfmxzYgM1KIypdhsBY+nGMQpUdPhG0axv5GmCuh2\nmZIZcSPM6A/3VGjKq3RNWBnKInmtmWO4GipGcjXuPJFaTCOuhhw2N9n85aWNtL08\ntPXqT3/SEYtvM560KFRMkxMH1u43YMLI5WmyIMVvUQKBgQDuKoC9RHHq9jT0WSuN\n9tfG/xBNNm03IlOqn47l4duQjNIqcFFCTST+LRq9G5QLQcXEM63/O1+pmsIBbSh3\nNfyUZeM4dvDvAvdKN/dDI+LTU8DGD6Mya21kyfLcfupUHq3scKUm4Bus/J7ZruHF\nB2w7pC+Tzl0hrLBKQdyx2ydU3QKBgQDfMjbJ1rlbSlVg5/LbwwdtmYuw9L+hfMfS\nFkcOrdccCizgVFTFZ8TR37cFbEPg8DpDRhpC8HpbnYXw7PwOgnJ4baTs8jgg3wzT\n1v9UoCcqfdhKEbYFVzkgcm80PgEa6eu60xBtKO63KB9yjmoAAhize69M4iYA3LFR\njVCPZvSziQKBgQDZLPbCIBTFDgfRvTJDPREcS+AgmH3U5b9neiIDLAZcdJz8x/jB\nPbl68cRNJ0XDUhG1zO5gLFMaRJ2eUVyyAA+3foVJKuSe/pRjIE+f8KxYyimiMgY9\n5soVOzXzrOOfG267iSiAH6H9B0sO8zK6yP8AD8K2xFoWZ/NFc3N813uxHQKBgQCT\nt3oHT3NRdfrXretPgt4xrUOElBcX26ur4U6Z6nfJePqGZYnNNIZQmI1aq3KpNpR4\n3baXwuxYIgL5lv6i47a6+WYD47M+HiExOsO10GDbgHpbWylqk3Wdgd8TZk348AQx\nm2rts/95fLaDbLm+06RhdWRpr+qS+3znim1c2zjscQKBgQDPmwByw7rdXGEFRCci\nPhSW5n/nyYQOqjXdy4ORdp1yNxxV2040LY0BM6EwYNK28BtCc2JgT1hNk1cJ8qcu\n7W/u8qtB2bA+/ZwdLtIbwHMaioNTzBan+USwC5t2pJpO2o1A4R5AiV75us1jbW64\nAXslv3vtRfTAHMuKxO3tRFZ9EQ==\n-----END PRIVATE KEY-----\n";
+    const calendarId = process.env.MY_CALENDAR_ID || 'conyku0508@gmail.com';
+
+    const auth = new google.auth.JWT(clientEmail, null, privateKey, ['https://www.googleapis.com/auth/calendar']);
+    return { auth, calendarId };
+}
+
 // ========== 系統狀態 ==========
 let systemEnabled = true;
 let BOT_USER_ID_CACHE = BOT_USER_ID;
@@ -165,7 +175,7 @@ app.post('/webhook', line.middleware(LINE_CONFIG), async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('MoAn Bot is running! v3.9');
+    res.send('MoAn Bot is running! v4.0');
 });
 
 // ========== 私訊處理（加入白名單檢查）==========
@@ -418,7 +428,7 @@ async function handleQueryTasks(event, userId) {
     }
 }
 
-// ========== 新增待辦（加入完整 debug log）==========
+// ========== 新增待辦 ==========
 async function handleAddTask(event, msg, userId, user) {
     try {
         const now = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
@@ -456,7 +466,6 @@ async function handleAddTask(event, msg, userId, user) {
 
         if (!tasks || tasks.length === 0) return reply(event, '我無法理解這個任務，請再說一次？');
 
-        // ===== 群組：直接建立 =====
         if (event._isGroup) {
             let results = [];
             for (const task of tasks) {
@@ -476,10 +485,9 @@ async function handleAddTask(event, msg, userId, user) {
                 const docRef = await db.collection('chat_logs').add(taskData);
                 console.log(`[ADD_TASK][群組] 任務已寫入 Firestore, docId: ${docRef.id}`);
 
-                // ===== 行事曆同步 =====
                 let calendarSynced = false;
                 if (task.start) {
-                    console.log(`[ADD_TASK][群組] 開始同步行事曆, start: ${task.start}, end: ${task.end || task.start}`);
+                    console.log(`[ADD_TASK][群組] 開始同步行事曆...`);
                     try {
                         const calId = await createCalendarEvent({
                             title: task.title,
@@ -489,15 +497,11 @@ async function handleAddTask(event, msg, userId, user) {
                         if (calId) {
                             await docRef.update({ calendarEventId: calId });
                             calendarSynced = true;
-                            console.log(`[ADD_TASK][群組] 行事曆同步成功, calendarEventId: ${calId}`);
-                        } else {
-                            console.warn('[ADD_TASK][群組] createCalendarEvent 回傳 null');
+                            console.log(`[ADD_TASK][群組] 行事曆同步成功！`);
                         }
                     } catch (calErr) {
-                        console.error('[ADD_TASK][群組] 行事曆同步失敗:', calErr.message, calErr.stack);
+                        console.error('[ADD_TASK][群組] 行事曆同步失敗:', calErr.message);
                     }
-                } else {
-                    console.log('[ADD_TASK][群組] 沒有 start 時間，跳過行事曆同步');
                 }
 
                 setContext(userId, docRef.id, task.title);
@@ -516,7 +520,6 @@ async function handleAddTask(event, msg, userId, user) {
             return reply(event, results.join('\n'));
         }
 
-        // ===== 私聊：需確認 =====
         const pendingRef = db.collection('pending_proposals').doc(userId);
         await pendingRef.set({
             tasks: tasks,
@@ -567,8 +570,6 @@ async function executeConfirmedTasks(event, userId, pending) {
         const tasks = pending.tasks;
         let results = [];
         for (const task of tasks) {
-            console.log(`[CONFIRM] 處理任務: "${task.title}", start: ${task.start}, end: ${task.end}`);
-
             const taskData = {
                 text: task.title,
                 ownerId: userId,
@@ -581,11 +582,9 @@ async function executeConfirmedTasks(event, userId, pending) {
             if (task.end) taskData.scheduledEnd = task.end;
 
             const docRef = await db.collection('chat_logs').add(taskData);
-            console.log(`[CONFIRM] 任務已寫入 Firestore, docId: ${docRef.id}`);
 
             let calendarSynced = false;
             if (task.start) {
-                console.log(`[CONFIRM] 開始同步行事曆, start: ${task.start}`);
                 try {
                     const calId = await createCalendarEvent({
                         title: task.title,
@@ -595,15 +594,10 @@ async function executeConfirmedTasks(event, userId, pending) {
                     if (calId) {
                         await docRef.update({ calendarEventId: calId });
                         calendarSynced = true;
-                        console.log(`[CONFIRM] 行事曆同步成功, calendarEventId: ${calId}`);
-                    } else {
-                        console.warn('[CONFIRM] createCalendarEvent 回傳 null');
                     }
                 } catch (calErr) {
-                    console.error('[CONFIRM] 行事曆同步失敗:', calErr.message, calErr.stack);
+                    console.error('[CONFIRM] 行事曆同步失敗:', calErr.message);
                 }
-            } else {
-                console.log('[CONFIRM] 沒有 start 時間，跳過行事曆同步');
             }
 
             setContext(userId, docRef.id, task.title);
@@ -646,8 +640,6 @@ async function handleModifyTask(event, msg, userId, userEmail) {
             .replace(/的|把|將|幫我|請|那個|這個|那筆|那件|這筆|這件|時間/g, '')
             .replace(/\s+/g, ' ').trim();
 
-        console.log(`清理後關鍵字: "${msgClean}"`);
-
         const taskList = [];
         snap.forEach(doc => taskList.push({ id: doc.id, doc, text: doc.data().text || '' }));
 
@@ -658,7 +650,6 @@ async function handleModifyTask(event, msg, userId, userEmail) {
             if (exact) {
                 targetDoc = exact.doc;
                 targetData = exact.doc.data();
-                console.log(`完全匹配: ${exact.text}`);
             }
 
             if (!targetDoc) {
@@ -669,15 +660,12 @@ async function handleModifyTask(event, msg, userId, userEmail) {
                         contents: [{ parts: [{ text: prompt }] }]
                     }, { headers: { 'Content-Type': 'application/json' } });
                     const aiResult = r.data.candidates[0].content.parts[0].text.trim();
-                    console.log(`AI 匹配結果: ${aiResult}`);
                     const matched = taskList.find(t => t.id === aiResult);
                     if (aiResult !== 'UNCLEAR' && matched) {
                         targetDoc = matched.doc;
                         targetData = matched.doc.data();
                     }
-                } catch (e) {
-                    console.error('AI 匹配失敗:', e.message);
-                }
+                } catch (e) {}
             }
 
             if (!targetDoc) {
@@ -695,7 +683,6 @@ async function handleModifyTask(event, msg, userId, userEmail) {
                 if (best && bestScore >= 30) {
                     targetDoc = best.doc;
                     targetData = best.doc.data();
-                    console.log(`子字串匹配: ${best.text}, 分數: ${bestScore}`);
                 }
             }
         }
@@ -1002,34 +989,13 @@ async function handleViewOtherTasks(event, msg) {
     return reply(event, text.trim());
 }
 
-// ========== Google Calendar（使用 CALENDAR_EMAIL + CALENDAR_PRIVATE_KEY）==========
+// ========== Google Calendar（直接使用內建金鑰）==========
 async function createCalendarEvent(eventData) {
     try {
-        console.log('[CALENDAR] createCalendarEvent 被呼叫, eventData:', JSON.stringify(eventData));
-        const calendarId = process.env.MY_CALENDAR_ID;
-        const clientEmail = process.env.CALENDAR_EMAIL;
-        const privateKey = (process.env.CALENDAR_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+        console.log('[CALENDAR] createCalendarEvent 被呼叫');
+        const { auth, calendarId } = getCalendarAuth();
 
-        console.log(`[CALENDAR] calendarId: ${calendarId || '(未設定)'}`);
-        console.log(`[CALENDAR] clientEmail: ${clientEmail || '(未設定)'}`);
-        console.log(`[CALENDAR] privateKey 長度: ${privateKey.length}`);
-
-        if (!calendarId) {
-            console.error('[CALENDAR] MY_CALENDAR_ID 未設定！');
-            return null;
-        }
-        if (!clientEmail) {
-            console.error('[CALENDAR] CALENDAR_EMAIL 未設定！');
-            return null;
-        }
-        if (!privateKey || privateKey.length < 100) {
-            console.error('[CALENDAR] CALENDAR_PRIVATE_KEY 未設定或不完整！');
-            return null;
-        }
-
-        const auth = new google.auth.JWT(clientEmail, null, privateKey, ['https://www.googleapis.com/auth/calendar']);
         const calendar = google.calendar({ version: 'v3', auth });
-
         const res = await calendar.events.insert({
             calendarId: calendarId,
             requestBody: {
@@ -1051,16 +1017,7 @@ async function createCalendarEvent(eventData) {
 
 async function updateCalendarEvent(eventId, eventData) {
     try {
-        const calendarId = process.env.MY_CALENDAR_ID;
-        const clientEmail = process.env.CALENDAR_EMAIL;
-        const privateKey = (process.env.CALENDAR_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-
-        if (!calendarId || !clientEmail || !privateKey) {
-            console.error('[CALENDAR] 更新失敗：缺少必要設定');
-            return;
-        }
-
-        const auth = new google.auth.JWT(clientEmail, null, privateKey, ['https://www.googleapis.com/auth/calendar']);
+        const { auth, calendarId } = getCalendarAuth();
         const calendar = google.calendar({ version: 'v3', auth });
         await calendar.events.update({
             calendarId: calendarId,
@@ -1102,13 +1059,18 @@ async function init() {
         console.error('讀取系統狀態失敗（不影響啟動）:', e.message);
     }
 
-    // 啟動時檢查行事曆設定
-    console.log('[INIT] MY_CALENDAR_ID:', process.env.MY_CALENDAR_ID ? '已設定' : '❌ 未設定');
-    console.log('[INIT] CALENDAR_EMAIL:', process.env.CALENDAR_EMAIL ? '已設定' : '❌ 未設定');
-    console.log('[INIT] CALENDAR_PRIVATE_KEY:', process.env.CALENDAR_PRIVATE_KEY ? `已設定 (${process.env.CALENDAR_PRIVATE_KEY.length} chars)` : '❌ 未設定');
+    // 驗證行事曆連線
+    try {
+        const { auth, calendarId } = getCalendarAuth();
+        const calendar = google.calendar({ version: 'v3', auth });
+        const testResult = await calendar.calendarList.list({ maxResults: 1 });
+        console.log('[INIT] Google Calendar 連線成功！');
+    } catch (e) {
+        console.error('[INIT] Google Calendar 連線失敗:', e.message);
+    }
 }
 
-// ========== 啟動伺服器（即使 init 失敗也能啟動）==========
+// ========== 啟動伺服器 ==========
 init().catch(err => {
     console.error('初始化錯誤（不影響啟動）:', err.message);
 }).then(() => {
