@@ -28,15 +28,46 @@ const ROLE_ADMIN = 'admin';
 const ROLE_MANAGER = 'manager';
 const ROLE_MEMBER = 'member';
 
-// ========== Google Calendar Service Account（Base64 解碼）==========
-const SA_BASE64 = 'eyJ0eXBlIjoic2VydmljZV9hY2NvdW50IiwicHJvamVjdF9pZCI6Im1vYW4tYWR0ZWNoLWJvdCIsInByaXZhdGVfa2V5X2lkIjoiODE5Mjg2M2M5OGY0MDE0ZDRkMjA3MDNkM2I4ZmFkNzEzZDljYTcyZSIsInByaXZhdGVfa2V5IjoiLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktrd2dnU2xBZ0VBQW9JQkFRRFBwYjFxd2VHVU9xU3gKRHlIRytMRkNmYWZQOG42WGVyb1JKQXNiM0dnVncreWRobWJkaUliVkYzSGZiU09GTnJDekVyNVJBTXlFa3lvRQptZE1DanhxRERUMVp6Yml4ZGM4OS9Xam5ZU0Z6OUJYNGREaEdWa0Z1TDk4SjZ3UytScW5jVDE5LzFsYWRNVGJiCmYvSGpvQ2g0UTZ5OENtYWRhSFJIUHBRT1dVZW9SMU91dFVLQ21qOHZPMnNpU3Jxb0dGSTY3aDJLQkZzT0hERHMKZ1QvRjdSdm93ZFNDbnBlWGZnM3lCV0JqT09vMnZhUlR1V3N4TDVPOCtaVkJqeFZhK2Z3WmxUUllKY3VRTDdSeQozYXpaQlV5SW1OV3B5TEFkak5kdEtySHQ3eFQ2Z1VnNHZSeU96Sy9OcUEvd01GbytKVDlic2FzL1BaQk9IMkdjCmZDcTVCdkZGQWdNQkFBRUNnZ0VBS1ZJWWh2R05BN1BGeVN3ek13YVRNNkdRcnR0WklLaTk5U0pBaWF0TEZTVzMKWk1OMW5ka0l4OGZTRTcyQ3A0UXlGbmlBNGRxd1dDTjI1Wko4d0pJY212NmIrazVyVmZrVkpBZFZCRkk2VjNvMwprd2tCbDlHYlZLTjNGV0Nzd1hhTFg3bDF6aGtuaEVGaVlyeXJ0SG5QQTl1bnVJV3pWTmlQNXd1SFovR1JSbVdMCmJLNTZ5QUwzeTN2MjJDZTY5U1R0aGpza1hmbXh6WWdNMUtJeXBkaHNCWStuR01RcFVkUGhHMGF4djVHbUN1aDIKbVpJWmNTUE02QS8zVkdqS3EzUk5XQm5LSW5tdG1XTzRHaXBHY2pYdVBKRmFUQ091aGh3Mk45bjg1YVdOdEwwOAp0UFhxVDMvU0VZdHZNNTYwS0ZSTWt4TUgxdTQzWU1MSTVXbXlJTVZ2VVFLQmdRRHVLb0M5UkhIcTlqVDBXU3VOCjl0ZkcveEJOTm0wM0lsT3FuNDdsNGR1UWpOSXFjRkZDVFNUK0xScTlHNVFMUWNYRU02My9PMStwbXNJQmJTaDMKTmZ5VVplTTRkdkR2QXZkS04vZERJK0xUVThER0Q2TXlhMjFreWZMY2Z1cFVIcTNzY0tVbTRCdXMvSjdacnVIRgpCMnc3cEMrVHpsMGhyTEJLUWR5eDJ5ZFUzUUtCZ1FEZk1qYkoxcmxiU2xWZzUvTGJ3d2R0bVl1dzlMK2hmTWZTCkZrY09yZGNjQ2l6Z1ZGVEZaOFRSMzdjRmJFUGc4RHBEUmhwQzhIcGJuWVh3N1B3T2duSjRiYVRzOGpnZzN3elQKMXY5VW9DY3FmZGhLRWJZRlZ6a2djbTgwUGdFYTZldTYweEJ0S082M0tCOXlqbW9BQWhpemU2OU00aVlBM0xGUgpqVkNQWnZTemlRS0JnUURaTFBiQ0lCVEZEZ2ZSdlRKRFBSRWNTK0FnbUgzVTViOW5laUlETEFaY2RKejh4L2pCClBibDY4Y1JOSjBYRFVoRzF6TzVnTEZNYVJKMmVVVnl5QUErM2ZvVkpLdVNlL3BSaklFK2Y4S3hZeWltaU1nWTkKNXNvVk96WHpyT09mRzI2N2lTaUFINkg5QjBzTzh6SzZ5UDhBRDhLMnhGb1daL05GYzNOODEzdXhIUUtCZ1FDVAp0M29IVDNOUmRmclhyZXRQZ3Q0eHJVT0VsQmNYMjZ1cjRVNlo2bmZKZVBxR1pZbk5OSVpRbUkxYXEzS3BOcFI0CjNiYVh3dXhZSWdMNWx2Nmk0N2E2K1dZRDQ3TStIaUV4T3NPMTBHRGJnSHBiV3lscWszV2RnZDhUWmszNDhBUXgKbTJydHMvOTVmTGFEYkxtKzA2UmhkV1JwcitxUyszem5pbTFjMnpqc2NRS0JnUURQbXdCeXc3cmRYR0VGUkNjaQpQaFNXNW4vbnlZUU9xalhkeTRPUmRwMXlOeHhWMjA0MExZMEJNNkV3WU5LMjhCdENjMkpnVDFoTmsxY0o4cWN1CjdXL3U4cXRCMmJBKy9ad2RMdElid0hNYWlvTlR6QmFuK1VTd0M1dDJwSnBPMm8xQTRSNUFpVjc1dXMxamJXNjQKQVhzbHYzdnRSZlRBSE11S3hPM3RSRlo5RVE9PQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCiIsImNsaWVudF9lbWFpbCI6ImNhbGVuZGFyLWJvdEBtb2FuLWFkdGVjaC1ib3QuaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLCJjbGllbnRfaWQiOiIxMDg5Nzg3NzM3NTYwMDg3OTQ4NzgiLCJhdXRoX3VyaSI6Imh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwidG9rZW5fdXJpIjoiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4ifQo=';
-
+// ========== Google Calendar Service Account（陣列組合，換行 100% 正確）==========
 function getCalendarAuth() {
-    const sa = JSON.parse(Buffer.from(SA_BASE64, 'base64').toString('utf8'));
+    const SA_JSON = {
+        client_email: 'calendar-bot@moan-adtech-bot.iam.gserviceaccount.com',
+        private_key: [
+            '-----BEGIN PRIVATE KEY-----',
+            'MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDPpb1qweGUOqSx',
+            'DyHG+LFCfafP8n6XeroRJAsb3GgVw+ydhmbdiIbVF3HfbSOFNrCzEr5RAMyEkyoE',
+            'mdMCjxqDDT1Zzbixdc89/WjnYSFz9BX4dDhGVkFuL98J6wS+RqncT19/1ladMTbb',
+            'f/HjoCh4Q6y8CmadaHRHPpQOWUeoR1OutUKCmj8vO2siSrqoGFI67h2KBFsOHDDs',
+            'gT/F7RvowdSCnpeXfg3yBWBjOOo2vaRTuWsxL5O8+ZVBjxVa+fwZlTRYJcuQL7Ry',
+            '3azZBUyImNWpyLAdjNdtKrHt7xT6gUg4vRyOzK/NqA/wMFo+JT9bsas/PZBOH2Gc',
+            'fCq5BvFFAgMBAAECggEAKVIYhvGNA7PFySwzMwaTM6GQrttZIKi99SJAiatLFSW3',
+            'ZMN1ndkIx8fSE72Cp4QyFniA4dqwWCN25ZJ8wJIcmv6b+k5rVfkVJAdVBFI6V3o3',
+            'kwkBl9GbVKN3FWCswXaLX7l1zhknhEFiYryrtHnPA9unuIWzVNiP5wuHZ/GRRmWL',
+            'bK56yAL3y3v22Ce69STthjskXfmxzYgM1KIypdhsBY+nGMQpUdPhG0axv5GmCuh2',
+            'mZIZcSPM6A/3VGjKq3RNWBnKInmtmWO4GipGcjXuPJFaTCOuhhw2N9n85aWNtL08',
+            'tPXqT3/SEYtvM560KFRMkxMH1u43YMLI5WmyIMVvUQKBgQDuKoC9RHHq9jT0WSuN',
+            '9tfG/xBNNm03IlOqn47l4duQjNIqcFFCTST+LRq9G5QLQcXEM63/O1+pmsIBbSh3',
+            'NfyUZeM4dvDvAvdKN/dDI+LTU8DGD6Mya21kyfLcfupUHq3scKUm4Bus/J7ZruHF',
+            'B2w7pC+Tzl0hrLBKQdyx2ydU3QKBgQDfMjbJ1rlbSlVg5/LbwwdtmYuw9L+hfMfS',
+            'FkcOrdccCizgVFTFZ8TR37cFbEPg8DpDRhpC8HpbnYXw7PwOgnJ4baTs8jgg3wzT',
+            '1v9UoCcqfdhKEbYFVzkgcm80PgEa6eu60xBtKO63KB9yjmoAAhize69M4iYA3LFR',
+            'jVCPZvSziQKBgQDZLPbCIBTFDgfRvTJDPREcS+AgmH3U5b9neiIDLAZcdJz8x/jB',
+            'Pbl68cRNJ0XDUhG1zO5gLFMaRJ2eUVyyAA+3foVJKuSe/pRjIE+f8KxYyimiMgY9',
+            '5soVOzXzrOOfG267iSiAH6H9B0sO8zK6yP8AD8K2xFoWZ/NFc3N813uxHQKBgQCT',
+            't3oHT3NRdfrXretPgt4xrUOElBcX26ur4U6Z6nfJePqGZYnNNIZQmI1aq3KpNpR4',
+            '3baXwuxYIgL5lv6i47a6+WYD47M+HiExOsO10GDbgHpbWylqk3Wdgd8TZk348AQx',
+            'm2rts/95fLaDbLm+06RhdWRpr+qS+3znim1c2zjscQKBgQDPmwByw7rdXGEFRCci',
+            'PhSW5n/nyYQOqjXdy4ORdp1yNxxV2040LY0BM6EwYNK28BtCc2JgT1hNk1cJ8qcu',
+            '7W/u8qtB2bA+/ZwdLtIbwHMaioNTzBan+USwC5t2pJpO2o1A4R5AiV75us1jbW64',
+            'AXslv3vtRfTAHMuKxO3tRFZ9EQ==',
+            '-----END PRIVATE KEY-----',
+            ''
+        ].join('\n')
+    };
     const auth = new google.auth.JWT(
-        sa.client_email,
+        SA_JSON.client_email,
         null,
-        sa.private_key,
+        SA_JSON.private_key,
         ['https://www.googleapis.com/auth/calendar']
     );
     const calendarId = process.env.MY_CALENDAR_ID || 'conyku0508@gmail.com';
@@ -180,7 +211,7 @@ app.post('/webhook', line.middleware(LINE_CONFIG), async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('MoAn Bot is running! v4.1');
+    res.send('MoAn Bot is running! v4.2');
 });
 
 // ========== 私訊處理 ==========
@@ -335,23 +366,15 @@ async function handleDirectMessage(event, userId, msg, user) {
     }
 
     switch (intent) {
-        case 'QUERY_TASKS':
-            return await handleQueryTasks(event, userId);
-        case 'ADD_TASK':
-            return await handleAddTask(event, msg, userId, user);
-        case 'MODIFY_TASK':
-            return await handleModifyTask(event, msg, userId, user.email);
-        case 'COMPLETE_TASK':
-            return await handleCompleteTask(event, msg, userId);
-        case 'DELETE_TASK':
-            return await handleDeleteTask(event, msg, userId);
-        case 'QUERY_FILE':
-            return await handleFileQuery(event, msg);
-        case 'HELP':
-            return reply(event, getHelpText(user.role));
+        case 'QUERY_TASKS': return await handleQueryTasks(event, userId);
+        case 'ADD_TASK': return await handleAddTask(event, msg, userId, user);
+        case 'MODIFY_TASK': return await handleModifyTask(event, msg, userId, user.email);
+        case 'COMPLETE_TASK': return await handleCompleteTask(event, msg, userId);
+        case 'DELETE_TASK': return await handleDeleteTask(event, msg, userId);
+        case 'QUERY_FILE': return await handleFileQuery(event, msg);
+        case 'HELP': return reply(event, getHelpText(user.role));
         case 'CHITCHAT':
-        default:
-            return await handleChitchat(event, msg);
+        default: return await handleChitchat(event, msg);
     }
 }
 
@@ -405,7 +428,6 @@ async function handleQueryTasks(event, userId) {
                 .orderBy('timestamp', 'desc')
                 .get();
         } catch (indexErr) {
-            console.log('索引錯誤，使用備用查詢');
             snap = await db.collection('chat_logs')
                 .where('ownerId', '==', userId)
                 .where('status', '==', 'active')
