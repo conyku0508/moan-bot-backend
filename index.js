@@ -18,13 +18,30 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const ADMIN_USER_ID = process.env.ADMIN_USER_ID || '';
 const PORT = process.env.PORT || 8080;
 
-// ========== Gemini 模型（統一使用） ==========
+// ========== Gemini 模型 ==========
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
 // ========== 系統狀態 ==========
 let systemEnabled = true;
 let BOT_USER_ID_CACHE = process.env.BOT_USER_ID || '';
+
+// ========== 上下文記憶（最近操作的任務） ==========
+const userContext = {};
+
+function setContext(userId, taskId, taskTitle) {
+    userContext[userId] = { taskId, taskTitle, timestamp: Date.now() };
+}
+
+function getContext(userId) {
+    const ctx = userContext[userId];
+    if (!ctx) return null;
+    if (Date.now() - ctx.timestamp > 10 * 60 * 1000) {
+        delete userContext[userId];
+        return null;
+    }
+    return ctx;
+}
 
 // ========== 角色定義 ==========
 const ROLES = { ADMIN: 'admin', MANAGER: 'manager', MEMBER: 'member' };
@@ -40,22 +57,24 @@ function getHelpText(role) {
     text += '3. 查詢待辦：說「待辦有哪些」「目前任務」\n\n';
     text += '4. 完成任務：說「荷卡那個完成了」\n\n';
     text += '5. 刪除任務：說「刪除荷卡那筆」\n\n';
-    text += '6. 取消暫存：說「取消」「不要」「算了」\n\n';
-    text += '7. 閒聊：任何不像任務的話，機器人會陪你聊\n';
+    text += '6. 修改任務：說「改到下午2點」「延後到明天」\n\n';
+    text += '7. 查詢資料：說「荷卡報告在哪」「提案資料給我」\n\n';
+    text += '8. 取消暫存：說「取消」「不要」「算了」\n\n';
+    text += '9. 閒聊：任何不像任務的話，機器人會陪你聊\n';
 
     if (role === ROLES.MANAGER || role === ROLES.ADMIN) {
         text += '\n【主管功能】\n';
-        text += '8. 查看別人待辦：「查看 XXX 的待辦」\n';
-        text += '9. 查看全部待辦：「查看所有人的待辦」\n';
+        text += '10. 查看別人待辦：「查看 XXX 的待辦」\n';
+        text += '11. 查看全部待辦：「查看所有人的待辦」\n';
     }
 
     if (role === ROLES.ADMIN) {
         text += '\n【管理員功能】\n';
-        text += '10. 停用系統：「停用系統」\n';
-        text += '11. 啟用系統：「啟用系統」\n';
-        text += '12. 設定主管：「設定主管 XXX」\n';
-        text += '13. 移除主管：「移除主管 XXX」\n';
-        text += '14. 成員列表：「成員列表」\n';
+        text += '12. 停用系統：「停用系統」\n';
+        text += '13. 啟用系統：「啟用系統」\n';
+        text += '14. 設定主管：「設定主管 XXX」\n';
+        text += '15. 移除主管：「移除主管 XXX」\n';
+        text += '16. 成員列表：「成員列表」\n';
     }
 
     text += '\n【群組使用】\n';
@@ -76,21 +95,28 @@ function containsDate(text) {
     return patterns.some(p => p.test(text));
 }
 
+function containsTime(text) {
+    const patterns = [
+        /\d{1,2}點/,
+        /\d{1,2}:\d{2}/,
+        /上午|下午|早上|中午|晚上/,
+        /\d{1,2}(am|pm|AM|PM)/
+    ];
+    return patterns.some(p => p.test(text));
+}
+
 async function getOrCreateUser(userId, displayName) {
     const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
-
     if (userDoc.exists) {
         if (displayName && userDoc.data().displayName !== displayName) {
-            await userRef.update({ displayName: displayName, lastActive: admin.firestore.FieldValue.serverTimestamp() });
+            await userRef.update({ displayName, lastActive: admin.firestore.FieldValue.serverTimestamp() });
         }
         return userDoc.data();
     }
-
     const isAdmin = userId === ADMIN_USER_ID;
     const newUser = {
-        userId: userId,
-        displayName: displayName || '未知',
+        userId, displayName: displayName || '未知',
         role: isAdmin ? ROLES.ADMIN : ROLES.MEMBER,
         email: null,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -116,7 +142,7 @@ async function findUserByName(name) {
     return found;
 }
 
-// ========== Express 設定 ==========
+// ========== Express ==========
 const app = express();
 app.post('/callback', line.middleware(LINE_CONFIG), async (req, res) => {
     try {
@@ -131,11 +157,9 @@ app.post('/callback', line.middleware(LINE_CONFIG), async (req, res) => {
 // ========== 主事件處理 ==========
 async function handleEvent(event) {
     if (event.type !== 'message' || event.message.type !== 'text') return null;
-
     if (!systemEnabled && event.source.userId !== ADMIN_USER_ID) {
         return reply(event, '系統目前維護中，請稍後再試。');
     }
-
     const source = event.source;
     if (source.type === 'group') {
         return await handleGroupMessage(event, source.groupId, source.userId);
@@ -143,11 +167,10 @@ async function handleEvent(event) {
     return await handleDirectMessage(event, source.userId);
 }
 
-// ========== 群組訊息處理 ==========
+// ========== 群組訊息 ==========
 async function handleGroupMessage(event, groupId, userId) {
     const rawText = event.message.text.trim();
     const botId = BOT_USER_ID_CACHE;
-
     let isMentioned = false;
     let commandText = rawText;
 
@@ -164,25 +187,16 @@ async function handleGroupMessage(event, groupId, userId) {
 
     if (!isMentioned) {
         let senderName = '未知';
-        try {
-            const profile = await client.getGroupMemberProfile(groupId, userId);
-            senderName = profile.displayName;
-        } catch (e) { }
+        try { const profile = await client.getGroupMemberProfile(groupId, userId); senderName = profile.displayName; } catch (e) { }
         await db.collection('group_logs').add({
-            groupId: groupId,
-            userId: userId,
-            senderName: senderName,
-            text: rawText,
+            groupId, userId, senderName, text: rawText,
             timestamp: admin.firestore.FieldValue.serverTimestamp()
         });
         return null;
     }
 
     let senderName = '未知';
-    try {
-        const profile = await client.getGroupMemberProfile(groupId, userId);
-        senderName = profile.displayName;
-    } catch (e) { }
+    try { const profile = await client.getGroupMemberProfile(groupId, userId); senderName = profile.displayName; } catch (e) { }
     await getOrCreateUser(userId, senderName);
 
     const helpKeywords = ['怎麼用', '使用說明', '你會什麼', 'help', '功能', '指令'];
@@ -206,27 +220,14 @@ async function handleGroupSummary(event, groupId) {
             .where('groupId', '==', groupId)
             .orderBy('timestamp', 'asc')
             .where('timestamp', '>=', twoHoursAgo)
-            .limit(100)
-            .get();
-
+            .limit(100).get();
         if (snap.empty) return reply(event, '最近兩小時沒有聊天記錄可以整理。');
-
         let chatHistory = '';
-        snap.forEach(doc => {
-            const d = doc.data();
-            chatHistory += `${d.senderName}：${d.text}\n`;
-        });
-
+        snap.forEach(doc => { const d = doc.data(); chatHistory += `${d.senderName}：${d.text}\n`; });
         const prompt = `你是一位專業的會議記錄助理。請根據以下群組聊天記錄，整理出重點摘要。
-嚴禁使用 Markdown 符號（不要用 #、*、- 等）。
-用自然段落和換行排版。
+嚴禁使用 Markdown 符號（不要用 #、*、- 等）。用自然段落和換行排版。
 重點標註：誰說了什麼重要的事、有哪些待辦或決議。
-
-聊天記錄：
-${chatHistory}
-
-請整理摘要：`;
-
+聊天記錄：\n${chatHistory}\n請整理摘要：`;
         const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
         const summary = r.data.candidates[0].content.parts[0].text.trim();
         return reply(event, `【討論摘要】\n\n${summary}`);
@@ -242,10 +243,7 @@ async function handleDirectMessage(event, userId, overrideText) {
     const lowerMsg = msg.toLowerCase();
 
     let displayName = '使用者';
-    try {
-        const profile = await client.getProfile(userId);
-        displayName = profile.displayName;
-    } catch (e) { }
+    try { const profile = await client.getProfile(userId); displayName = profile.displayName; } catch (e) { }
     const user = await getOrCreateUser(userId, displayName);
 
     console.log('=== 收到訊息 ===');
@@ -256,7 +254,7 @@ async function handleDirectMessage(event, userId, overrideText) {
     if (msg.startsWith('綁定 ') || msg.startsWith('綁定')) {
         const email = msg.replace('綁定', '').trim();
         if (!email || !email.includes('@')) return reply(event, '格式：綁定 你的email\n例：綁定 cony@js-adways.com.tw');
-        await db.collection('users').doc(userId).update({ email: email });
+        await db.collection('users').doc(userId).update({ email });
         return reply(event, `綁定成功！你的信箱：${email}\n之後新增的待辦會同步到你的行事曆。`);
     }
 
@@ -276,9 +274,7 @@ async function handleDirectMessage(event, userId, overrideText) {
     const viewOtherMatch = msg.match(/查看(.+?)的待辦/);
     if (viewOtherMatch && canViewOthers(user.role)) {
         const targetName = viewOtherMatch[1].trim();
-        if (targetName === '所有人') {
-            return await handleQueryAllTasks(event);
-        }
+        if (targetName === '所有人') return await handleQueryAllTasks(event);
         const targetUser = await findUserByName(targetName);
         if (!targetUser) return reply(event, `找不到「${targetName}」這位成員。`);
         return await handleQueryTasks(event, targetUser.userId, targetUser.displayName);
@@ -300,14 +296,25 @@ async function handleDirectMessage(event, userId, overrideText) {
 
     // ===== 關鍵字分流 =====
     const hasDate = containsDate(msg);
+    const hasTime = containsTime(msg);
     const queryKeywords = ['待辦有哪些', '有哪些待辦', '待辦清單', '任務清單', '目前任務', '還有什麼', '目前有什麼', '看一下任務', '列出待辦', '查看待辦'];
     const isQuery = queryKeywords.some(k => msg.includes(k));
     const completeKeywords = ['完成', '做完', '搞定', '已完成', '處理好', '結案'];
     const isComplete = completeKeywords.some(k => msg.includes(k));
     const deleteKeywords = ['刪除', '移除', '拿掉', '去掉'];
     const isDelete = deleteKeywords.some(k => msg.includes(k));
+    const modifyKeywords = ['改到', '改成', '延後', '提前', '改時間', '換到', '調整到', '移到'];
+    const isModify = modifyKeywords.some(k => msg.includes(k));
+    const fileKeywords = ['資料在哪', '檔案在哪', '報告在哪', '簡報在哪', '提案在哪', '在哪裡', '給我連結', '下載連結', '檔案給我', '資料給我', '報告給我', '簡報給我', '提案給我'];
+    const isFileQuery = fileKeywords.some(k => msg.includes(k));
 
-    // 日期 + 長度 > 5 → 新增任務
+    // 修改任務（有時間/日期 + 修改關鍵字）
+    if (isModify) return await handleModifyTask(event, msg, userId, user.email);
+
+    // 查詢檔案
+    if (isFileQuery) return await handleFileQuery(event, msg);
+
+    // 日期 + 長度 > 5 → 新增任務（排除修改/完成/刪除/查詢）
     if (hasDate && msg.length > 5 && !isComplete && !isDelete && !isQuery) {
         return await handleAddTask(event, userId, msg, pendingRef);
     }
@@ -325,6 +332,8 @@ async function handleDirectMessage(event, userId, overrideText) {
         case 'ADD_TASK': return await handleAddTask(event, userId, msg, pendingRef);
         case 'COMPLETE_TASK': return await handleCompleteTask(event, msg, userId);
         case 'DELETE_TASK': return await handleDeleteTask(event, msg, userId);
+        case 'MODIFY_TASK': return await handleModifyTask(event, msg, userId, user.email);
+        case 'QUERY_FILE': return await handleFileQuery(event, msg);
         default: return await handleChitchat(event, msg);
     }
 }
@@ -381,6 +390,8 @@ async function classifyIntent(message) {
 - QUERY_TASKS：使用者想查看、瀏覽目前的待辦事項
 - COMPLETE_TASK：使用者表示某個任務已經完成、搞定、結案
 - DELETE_TASK：使用者想刪除、移除某個任務
+- MODIFY_TASK：使用者想修改已有任務的時間、內容、日期（例如：改到明天、延後、提前、改時間）
+- QUERY_FILE：使用者在找某份資料、檔案、報告、簡報、提案的位置或下載連結
 - CHITCHAT：閒聊、打招呼、抱怨、情緒抒發、與任務無關的對話
 
 使用者訊息：「${message}」
@@ -389,7 +400,7 @@ async function classifyIntent(message) {
     try {
         const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
         const txt = r.data.candidates[0].content.parts[0].text.trim();
-        return ['QUERY_TASKS', 'ADD_TASK', 'COMPLETE_TASK', 'DELETE_TASK', 'CHITCHAT'].includes(txt) ? txt : 'CHITCHAT';
+        return ['QUERY_TASKS', 'ADD_TASK', 'COMPLETE_TASK', 'DELETE_TASK', 'MODIFY_TASK', 'QUERY_FILE', 'CHITCHAT'].includes(txt) ? txt : 'CHITCHAT';
     } catch (e) {
         console.error('意圖分類失敗:', e.message);
         return 'CHITCHAT';
@@ -401,30 +412,25 @@ async function handleQueryTasks(event, userId, displayName) {
     try {
         console.log('=== 查詢待辦開始 ===');
         console.log('查詢 ownerId:', userId);
-
         let snap;
         try {
             snap = await db.collection('chat_logs')
                 .where('ownerId', '==', userId)
                 .where('status', '==', 'active')
                 .orderBy('timestamp', 'desc')
-                .limit(20)
-                .get();
+                .limit(20).get();
             console.log('排序查詢成功，筆數:', snap.size);
         } catch (indexErr) {
             console.log('索引降級查詢:', indexErr.message);
             snap = await db.collection('chat_logs')
                 .where('ownerId', '==', userId)
-                .where('status', '==', 'active')
-                .get();
+                .where('status', '==', 'active').get();
             console.log('降級查詢筆數:', snap.size);
         }
-
         if (snap.empty) {
             console.log('查詢結果為空');
             return reply(event, `${displayName}，你目前沒有任何待辦事項，清單是空的！`);
         }
-
         let text = `${displayName}，以下是你目前的待辦事項：\n`;
         let i = 1;
         snap.forEach(doc => {
@@ -435,10 +441,16 @@ async function handleQueryTasks(event, userId, displayName) {
                 timeStr = ts.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
             }
             text += `\n${i}. ${d.text}`;
-            if (timeStr) text += `\n   建立：${timeStr}`;
+            if (d.scheduledStart) {
+                const st = new Date(d.scheduledStart);
+                const schedStr = st.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                text += `\n   排程：${schedStr}`;
+            } else if (timeStr) {
+                text += `\n   建立：${timeStr}`;
+            }
             i++;
         });
-        text += `\n\n共 ${i - 1} 項。完成或刪除直接跟我說。`;
+        text += `\n\n共 ${i - 1} 項。完成、刪除或修改時間直接跟我說。`;
         return reply(event, text);
     } catch (e) {
         console.error('查詢待辦錯誤:', e.message, e.stack);
@@ -450,7 +462,6 @@ async function handleQueryAllTasks(event) {
     try {
         const snap = await db.collection('chat_logs').where('status', '==', 'active').get();
         if (snap.empty) return reply(event, '目前所有人都沒有待辦事項。');
-
         const grouped = {};
         snap.forEach(doc => {
             const d = doc.data();
@@ -458,7 +469,6 @@ async function handleQueryAllTasks(event) {
             if (!grouped[name]) grouped[name] = [];
             grouped[name].push(d.text);
         });
-
         let text = '【所有人的待辦事項】\n';
         for (const [name, tasks] of Object.entries(grouped)) {
             text += `\n${name}（${tasks.length} 項）：\n`;
@@ -490,34 +500,21 @@ async function handleAddTask(event, userId, msg, pendingRef) {
     try {
         const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
         const aiText = r.data.candidates[0].content.parts[0].text.trim();
-
         const jsonMatch = aiText.match(/\[.*\]/s);
-        if (!jsonMatch) {
-            return reply(event, aiText + '\n\n（系統提示：AI 回覆格式異常，請重新輸入）');
-        }
-
+        if (!jsonMatch) return reply(event, aiText + '\n\n（系統提示：AI 回覆格式異常，請重新輸入）');
         let tasks;
-        try {
-            tasks = JSON.parse(jsonMatch[0]);
-        } catch (parseErr) {
-            console.error('JSON 解析失敗:', parseErr.message, 'AI原文:', aiText);
+        try { tasks = JSON.parse(jsonMatch[0]); } catch (parseErr) {
+            console.error('JSON 解析失敗:', parseErr.message);
             return reply(event, aiText + '\n\n（系統提示：解析失敗，請重新輸入）');
         }
-
-        if (!Array.isArray(tasks) || tasks.length === 0) {
-            return reply(event, aiText);
-        }
-
+        if (!Array.isArray(tasks) || tasks.length === 0) return reply(event, aiText);
         await pendingRef.set({
-            tasks: tasks,
-            originalMessage: msg,
+            tasks, originalMessage: msg,
             aiReply: aiText.replace(jsonMatch[0], '').trim(),
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
-
         const displayText = aiText.replace(jsonMatch[0], '').trim();
         return reply(event, displayText + '\n\n確認的話回覆「確認」，不要的話回覆「取消」。');
-
     } catch (e) {
         console.error('新增任務錯誤:', e.message);
         return reply(event, '處理任務時遇到問題，請稍後再試。');
@@ -529,35 +526,28 @@ async function executeConfirmedTasks(event, pendingRef, pendingData, userId, dis
     try {
         const tasks = pendingData.tasks || [];
         let resultMsg = '';
-
         for (const task of tasks) {
-            await db.collection('chat_logs').add({
-                text: task.title,
-                status: 'active',
-                ownerId: userId,
-                ownerName: displayName,
-                ownerEmail: userEmail || null,
+            const docRef = await db.collection('chat_logs').add({
+                text: task.title, status: 'active',
+                ownerId: userId, ownerName: displayName, ownerEmail: userEmail || null,
                 originalMessage: pendingData.originalMessage,
-                scheduledStart: task.start || null,
-                scheduledEnd: task.end || null,
+                scheduledStart: task.start || null, scheduledEnd: task.end || null,
                 timestamp: admin.firestore.FieldValue.serverTimestamp()
             });
-
+            // 儲存上下文
+            setContext(userId, docRef.id, task.title);
             try {
-                await createCalendarEvent(task, userEmail);
+                const calEvent = await createCalendarEvent(task, userEmail);
+                // 儲存 calendarEventId 以便後續修改
+                await db.collection('chat_logs').doc(docRef.id).update({ calendarEventId: calEvent.id || null });
                 resultMsg += `「${task.title}」已加入待辦，行事曆也同步好了！\n`;
             } catch (calErr) {
                 console.error('行事曆同步失敗:', calErr.message);
                 resultMsg += `「${task.title}」已加入待辦，但行事曆同步失敗：${calErr.message}\n`;
             }
         }
-
         await pendingRef.delete();
-
-        if (!userEmail) {
-            resultMsg += '\n提醒：你還沒綁定信箱，輸入「綁定 你的email」可以同步行事曆。';
-        }
-
+        if (!userEmail) resultMsg += '\n提醒：你還沒綁定信箱，輸入「綁定 你的email」可以同步行事曆。';
         return reply(event, resultMsg.trim());
     } catch (e) {
         console.error('執行確認任務錯誤:', e.message);
@@ -565,113 +555,174 @@ async function executeConfirmedTasks(event, pendingRef, pendingData, userId, dis
     }
 }
 
+// ========== 修改任務 ==========
+async function handleModifyTask(event, msg, userId, userEmail) {
+    try {
+        console.log('=== 修改任務開始 ===');
+        console.log('訊息:', msg);
+
+        // 先檢查上下文（最近操作的任務）
+        const ctx = getContext(userId);
+        let targetDoc = null;
+        let targetData = null;
+
+        if (ctx) {
+            console.log('有上下文，任務:', ctx.taskTitle);
+            const docSnap = await db.collection('chat_logs').doc(ctx.taskId).get();
+            if (docSnap.exists && docSnap.data().status === 'active') {
+                targetDoc = docSnap;
+                targetData = docSnap.data();
+            }
+        }
+
+        // 如果沒有上下文，嘗試從訊息中找到目標任務
+        if (!targetDoc) {
+            const snap = await db.collection('chat_logs')
+                .where('ownerId', '==', userId)
+                .where('status', '==', 'active').get();
+
+            if (snap.empty) return reply(event, '你目前沒有任何待辦事項可以修改。');
+
+            // 如果只有一筆，直接用它
+            if (snap.size === 1) {
+                targetDoc = snap.docs[0];
+                targetData = targetDoc.data();
+            } else {
+                // 多筆，用關鍵字比對
+                const msgClean = msg.replace(/改到|改成|延後|提前|改時間|換到|調整到|移到|上午|下午|早上|中午|晚上|\d+點|\d+:\d+|\d+\/\d+|明天|後天|的|把|將/g, '').trim();
+                let bestMatch = null;
+                let bestScore = 0;
+
+                snap.forEach(doc => {
+                    const text = doc.data().text || '';
+                    let score = 0;
+                    if (msgClean && (text.includes(msgClean) || msgClean.includes(text))) score = 100;
+                    else { for (const char of msgClean) { if (text.includes(char)) score += 10; } }
+                    if (score > bestScore) { bestScore = score; bestMatch = doc; }
+                });
+
+                if (bestMatch && bestScore >= 20) {
+                    targetDoc = bestMatch;
+                    targetData = bestMatch.data();
+                } else {
+                    // 找不到，列出清單
+                    let listText = '你有多個待辦，請說清楚要改哪一個：\n';
+                    let i = 1;
+                    snap.forEach(doc => { listText += `${i}. ${doc.data().text}\n`; i++; });
+                    listText += '\n例如：「把荷卡那個改到下午3點」';
+                    return reply(event, listText);
+                }
+            }
+        }
+
+        // 用 AI 解析新的時間
+        const now = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+        const prompt = `現在台灣時間是 ${now}。
+使用者想修改一個任務的時間。任務標題是「${targetData.text}」。
+原本排程：${targetData.scheduledStart || '無'}
+使用者說：「${msg}」
+
+請判斷新的開始時間和結束時間（結束 = 開始 + 1小時）。
+只回覆一行 JSON，格式：{"start":"2026-04-02T14:00:00+08:00","end":"2026-04-02T15:00:00+08:00"}
+不要回覆任何其他文字。`;
+
+        const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
+        const aiText = r.data.candidates[0].content.parts[0].text.trim();
+        console.log('AI 回傳時間:', aiText);
+
+        let newTime;
+        try {
+            const jsonMatch = aiText.match(/\{.*\}/s);
+            newTime = JSON.parse(jsonMatch[0]);
+        } catch (parseErr) {
+            console.error('時間解析失敗:', parseErr.message);
+            return reply(event, '我沒聽懂你要改到什麼時間，可以說清楚一點嗎？例如「改到明天下午3點」');
+        }
+
+        // 更新 Firestore
+        const updateData = {
+            scheduledStart: newTime.start,
+            scheduledEnd: newTime.end,
+            lastModified: admin.firestore.FieldValue.serverTimestamp()
+        };
+        await db.collection('chat_logs').doc(targetDoc.id).update(updateData);
+
+        // 更新 Google Calendar
+        if (targetData.calendarEventId) {
+            try {
+                await updateCalendarEvent(targetData.calendarEventId, {
+                    title: targetData.text,
+                    start: newTime.start,
+                    end: newTime.end
+                });
+                console.log('行事曆事件已更新');
+            } catch (calErr) {
+                console.error('行事曆更新失敗:', calErr.message);
+            }
+        }
+
+        // 更新上下文
+        setContext(userId, targetDoc.id, targetData.text);
+
+        const st = new Date(newTime.start);
+        const timeStr = st.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        return reply(event, `「${targetData.text}」已改到 ${timeStr}，行事曆也同步更新了！`);
+
+    } catch (e) {
+        console.error('修改任務錯誤:', e.message, e.stack);
+        return reply(event, '修改任務時遇到問題，請稍後再試。');
+    }
+}
+
 // ========== 完成任務 ==========
 async function handleCompleteTask(event, msg, userId) {
     try {
         console.log('=== 完成任務開始 ===');
-        console.log('使用者訊息:', msg);
-        console.log('使用者ID:', userId);
-
         const snap = await db.collection('chat_logs')
             .where('ownerId', '==', userId)
-            .where('status', '==', 'active')
-            .get();
-
-        console.log('查詢到的任務數量:', snap.size);
-
+            .where('status', '==', 'active').get();
         if (snap.empty) return reply(event, '你目前沒有任何待辦事項可以完成。');
-
-        // 如果只有一筆，直接完成
         if (snap.size === 1) {
             const doc = snap.docs[0];
-            const taskText = doc.data().text;
             await db.collection('chat_logs').doc(doc.id).update({
-                status: 'archived',
-                completedAt: admin.firestore.FieldValue.serverTimestamp()
+                status: 'archived', completedAt: admin.firestore.FieldValue.serverTimestamp()
             });
-            return reply(event, `「${taskText}」已標記為完成！`);
+            return reply(event, `「${doc.data().text}」已標記為完成！`);
         }
-
-        // 多筆任務，用關鍵字比對
-        let bestMatch = null;
-        let bestScore = 0;
+        let bestMatch = null; let bestScore = 0;
         const msgClean = msg.replace(/完成|做完|搞定|已完成|處理好|結案|了|那個|的/g, '').trim();
-        console.log('清理後的關鍵字:', msgClean);
-
         snap.forEach(doc => {
-            const d = doc.data();
-            const text = d.text || '';
+            const text = doc.data().text || '';
             let score = 0;
-
-            if (text.includes(msgClean) || msgClean.includes(text)) {
-                score = 100;
-            } else {
-                for (const char of msgClean) {
-                    if (text.includes(char)) score += 10;
-                }
-            }
-
-            console.log(`任務「${text}」匹配分數: ${score}`);
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestMatch = { id: doc.id, text: text };
-            }
+            if (text.includes(msgClean) || msgClean.includes(text)) score = 100;
+            else { for (const char of msgClean) { if (text.includes(char)) score += 10; } }
+            if (score > bestScore) { bestScore = score; bestMatch = { id: doc.id, text }; }
         });
-
         if (bestMatch && bestScore >= 20) {
-            console.log('關鍵字比對成功:', bestMatch.text, '分數:', bestScore);
             await db.collection('chat_logs').doc(bestMatch.id).update({
-                status: 'archived',
-                completedAt: admin.firestore.FieldValue.serverTimestamp()
+                status: 'archived', completedAt: admin.firestore.FieldValue.serverTimestamp()
             });
             return reply(event, `「${bestMatch.text}」已標記為完成！`);
         }
-
-        // 關鍵字比對不到，用 AI
-        console.log('關鍵字比對失敗，嘗試 AI 判斷');
-        let taskList = '';
-        const taskMap = {};
-        snap.forEach(doc => {
-            const d = doc.data();
-            taskMap[doc.id] = d.text;
-            taskList += `ID:${doc.id} 標題:${d.text}\n`;
-        });
-
-        const prompt = `使用者說：「${msg}」
-
-以下是他的待辦清單：
-${taskList}
-
-請判斷使用者要完成哪個任務，只回覆該任務的 ID（就是 ID: 後面的那串文字）。
-如果無法判斷，回覆「UNCLEAR」。
-只回覆 ID 或 UNCLEAR，不要回覆其他文字。`;
-
+        // AI 判斷
+        let taskList = ''; const taskMap = {};
+        snap.forEach(doc => { taskMap[doc.id] = doc.data().text; taskList += `ID:${doc.id} 標題:${doc.data().text}\n`; });
+        const prompt = `使用者說：「${msg}」\n以下是待辦清單：\n${taskList}\n請判斷要完成哪個任務，只回覆 ID。無法判斷回覆 UNCLEAR。`;
         try {
             const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
             const aiResult = r.data.candidates[0].content.parts[0].text.trim();
-            console.log('AI 回傳:', aiResult);
-
             if (aiResult !== 'UNCLEAR' && taskMap[aiResult]) {
                 await db.collection('chat_logs').doc(aiResult).update({
-                    status: 'archived',
-                    completedAt: admin.firestore.FieldValue.serverTimestamp()
+                    status: 'archived', completedAt: admin.firestore.FieldValue.serverTimestamp()
                 });
                 return reply(event, `「${taskMap[aiResult]}」已標記為完成！`);
             }
-        } catch (aiErr) {
-            console.error('AI 判斷失敗:', aiErr.message);
-        }
-
+        } catch (aiErr) { console.error('AI 判斷失敗:', aiErr.message); }
         let listText = '我不確定你要完成哪一項，以下是你的待辦：\n';
         let i = 1;
-        for (const [id, text] of Object.entries(taskMap)) {
-            listText += `${i}. ${text}\n`;
-            i++;
-        }
+        for (const [id, text] of Object.entries(taskMap)) { listText += `${i}. ${text}\n`; i++; }
         listText += '\n請說清楚一點，例如「荷卡那個完成了」';
         return reply(event, listText);
-
     } catch (e) {
         console.error('完成任務錯誤:', e.message, e.stack);
         return reply(event, '處理完成任務時遇到問題，請稍後再試。');
@@ -683,79 +734,136 @@ async function handleDeleteTask(event, msg, userId) {
     try {
         const snap = await db.collection('chat_logs')
             .where('ownerId', '==', userId)
-            .where('status', '==', 'active')
-            .get();
-
+            .where('status', '==', 'active').get();
         if (snap.empty) return reply(event, '你目前沒有任何待辦事項可以刪除。');
-
-        let bestMatch = null;
-        let bestScore = 0;
+        let bestMatch = null; let bestScore = 0;
         const msgClean = msg.replace(/刪除|移除|拿掉|去掉|那個|那筆|的/g, '').trim();
         const taskMap = {};
-
         snap.forEach(doc => {
-            const d = doc.data();
-            const text = d.text || '';
+            const text = doc.data().text || '';
             taskMap[doc.id] = text;
             let score = 0;
-
-            if (text.includes(msgClean) || msgClean.includes(text)) {
-                score = 100;
-            } else {
-                for (const char of msgClean) {
-                    if (text.includes(char)) score += 10;
-                }
-            }
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestMatch = { id: doc.id, text: text };
-            }
+            if (text.includes(msgClean) || msgClean.includes(text)) score = 100;
+            else { for (const char of msgClean) { if (text.includes(char)) score += 10; } }
+            if (score > bestScore) { bestScore = score; bestMatch = { id: doc.id, text }; }
         });
-
         if (bestMatch && bestScore >= 20) {
             await db.collection('chat_logs').doc(bestMatch.id).delete();
             return reply(event, `「${bestMatch.text}」已刪除！`);
         }
-
         let taskList = '';
+        snap.forEach(doc => { taskList += `ID:${doc.id} 標題:${doc.data().text}\n`; });
+        const prompt = `使用者說：「${msg}」\n以下是待辦清單：\n${taskList}\n請判斷要刪除哪個任務，只回覆 ID。無法判斷回覆 UNCLEAR。`;
+        try {
+            const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
+            const aiResult = r.data.candidates[0].content.parts[0].text.trim();
+            if (aiResult !== 'UNCLEAR' && taskMap[aiResult]) {
+                await db.collection('chat_logs').doc(aiResult).delete();
+                return reply(event, `「${taskMap[aiResult]}」已刪除！`);
+            }
+        } catch (aiErr) { console.error('AI 判斷刪除失敗:', aiErr.message); }
+        let listText = '我不確定你要刪除哪一項，以下是你的待辦：\n';
+        let i = 1;
+        for (const [id, text] of Object.entries(taskMap)) { listText += `${i}. ${text}\n`; i++; }
+        listText += '\n請說清楚一點，例如「刪除荷卡那筆」';
+        return reply(event, listText);
+    } catch (e) {
+        console.error('刪除任務錯誤:', e.message, e.stack);
+        return reply(event, '處理刪除任務時遇到問題，請稍後再試。');
+    }
+}
+
+// ========== 查詢共享檔案 ==========
+async function handleFileQuery(event, msg) {
+    try {
+        console.log('=== 查詢檔案 ===');
+        console.log('訊息:', msg);
+
+        const snap = await db.collection('shared_files').get();
+        if (snap.empty) return reply(event, '目前共享資料庫還沒有任何檔案，請管理員到後台新增。');
+
+        // 先用關鍵字比對
+        let bestMatch = null;
+        let bestScore = 0;
+        const allFiles = [];
+
         snap.forEach(doc => {
-            taskList += `ID:${doc.id} 標題:${doc.data().text}\n`;
+            const d = doc.data();
+            allFiles.push(d);
+            const searchText = `${d.name || ''} ${d.category || ''} ${d.description || ''} ${d.tags || ''}`;
+            let score = 0;
+
+            // 逐字比對
+            const msgClean = msg.replace(/資料|檔案|報告|簡報|提案|在哪|在哪裡|給我|連結|下載|的/g, '').trim();
+            for (const char of msgClean) {
+                if (searchText.includes(char)) score += 10;
+            }
+            if (searchText.includes(msgClean) || msgClean.includes(d.name || '')) score = 100;
+
+            if (score > bestScore) { bestScore = score; bestMatch = d; }
         });
 
-        const prompt = `使用者說：「${msg}」
+        if (bestMatch && bestScore >= 30) {
+            let result = `找到了！\n\n`;
+            result += `名稱：${bestMatch.name}\n`;
+            if (bestMatch.category) result += `分類：${bestMatch.category}\n`;
+            if (bestMatch.description) result += `說明：${bestMatch.description}\n`;
+            result += `\n下載連結：${bestMatch.url}`;
+            return reply(event, result);
+        }
 
-以下是他的待辦清單：
-${taskList}
+        // 比對不到，用 AI 判斷
+        let fileList = '';
+        allFiles.forEach(f => {
+            fileList += `名稱:${f.name} 分類:${f.category || '無'} 說明:${f.description || '無'}\n`;
+        });
 
-請判斷使用者要刪除哪個任務，只回覆該任務的 ID。
-如果無法判斷，回覆「UNCLEAR」。
-只回覆 ID 或 UNCLEAR，不要回覆其他文字。`;
+        const prompt = `使用者在找資料，他說：「${msg}」
+
+以下是共享資料庫中的檔案清單：
+${fileList}
+
+請判斷使用者要找哪個檔案，回覆該檔案的「名稱」（完全一致）。
+如果找不到，回覆「NOT_FOUND」。
+只回覆名稱或 NOT_FOUND，不要回覆其他文字。`;
 
         try {
             const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
             const aiResult = r.data.candidates[0].content.parts[0].text.trim();
 
-            if (aiResult !== 'UNCLEAR' && taskMap[aiResult]) {
-                await db.collection('chat_logs').doc(aiResult).delete();
-                return reply(event, `「${taskMap[aiResult]}」已刪除！`);
+            if (aiResult !== 'NOT_FOUND') {
+                const found = allFiles.find(f => f.name === aiResult);
+                if (found) {
+                    let result = `找到了！\n\n`;
+                    result += `名稱：${found.name}\n`;
+                    if (found.category) result += `分類：${found.category}\n`;
+                    if (found.description) result += `說明：${found.description}\n`;
+                    result += `\n下載連結：${found.url}`;
+                    return reply(event, result);
+                }
             }
         } catch (aiErr) {
-            console.error('AI 判斷刪除失敗:', aiErr.message);
+            console.error('AI 檔案判斷失敗:', aiErr.message);
         }
 
-        let listText = '我不確定你要刪除哪一項，以下是你的待辦：\n';
-        let i = 1;
-        for (const [id, text] of Object.entries(taskMap)) {
-            listText += `${i}. ${text}\n`;
-            i++;
+        // 都找不到，列出所有檔案
+        let listText = '沒有找到完全符合的檔案。以下是目前共享資料庫的所有檔案：\n\n';
+        const categories = {};
+        allFiles.forEach(f => {
+            const cat = f.category || '未分類';
+            if (!categories[cat]) categories[cat] = [];
+            categories[cat].push(f);
+        });
+        for (const [cat, files] of Object.entries(categories)) {
+            listText += `【${cat}】\n`;
+            files.forEach(f => { listText += `  ${f.name}\n`; });
         }
-        listText += '\n請說清楚一點，例如「刪除荷卡那筆」';
+        listText += '\n請說更具體一點，例如「荷卡的成效報告在哪」';
         return reply(event, listText);
 
     } catch (e) {
-        console.error('刪除任務錯誤:', e.message, e.stack);
-        return reply(event, '處理刪除任務時遇到問題，請稍後再試。');
+        console.error('查詢檔案錯誤:', e.message);
+        return reply(event, '查詢檔案時遇到問題，請稍後再試。');
     }
 }
 
@@ -767,62 +875,33 @@ async function handleChitchat(event, msg) {
 你不知道使用者的待辦事項內容，絕對不要自行編造任何任務清單。
 如果使用者問待辦事項相關問題，請回覆「讓我幫你查一下，請輸入『待辦有哪些』」。
 用自然、簡短、溫暖的方式回覆。
-
 使用者說：「${msg}」`;
-
     try {
         const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
-        const aiText = r.data.candidates[0].content.parts[0].text.trim();
-        return reply(event, aiText);
+        return reply(event, r.data.candidates[0].content.parts[0].text.trim());
     } catch (e) {
         console.error('閒聊錯誤:', e.message);
         return reply(event, '我剛剛恍神了，再說一次？');
     }
 }
 
-// ========== Google Calendar ==========
+// ========== Google Calendar 建立 ==========
 async function createCalendarEvent(taskData, userEmail) {
     const rawKey = process.env.CALENDAR_PRIVATE_KEY || '';
     const rawEmail = process.env.CALENDAR_EMAIL || '';
     const rawCalId = process.env.MY_CALENDAR_ID || '';
-
-    console.log('===== Calendar Debug =====');
-    console.log('Calendar ID:', rawCalId);
-    console.log('Task:', JSON.stringify(taskData));
-    console.log('==========================');
-
-    if (!rawKey || rawKey.length < 100) throw new Error('CALENDAR_PRIVATE_KEY 未設定或長度不足');
+    if (!rawKey || rawKey.length < 100) throw new Error('CALENDAR_PRIVATE_KEY 未設定');
     if (!rawEmail) throw new Error('CALENDAR_EMAIL 未設定');
     if (!rawCalId) throw new Error('MY_CALENDAR_ID 未設定');
-
     const cleanKey = rawKey.trim().replace(/^['"]|['"]$/g, '').replace(/\\n/g, '\n');
     const cleanEmail = rawEmail.trim().replace(/^['"]|['"]$/g, '');
     const targetCalId = rawCalId.trim().replace(/^['"]|['"]$/g, '');
-
-    const auth = new google.auth.JWT({
-        email: cleanEmail,
-        key: cleanKey,
-        scopes: ['https://www.googleapis.com/auth/calendar']
-    });
-
+    const auth = new google.auth.JWT({ email: cleanEmail, key: cleanKey, scopes: ['https://www.googleapis.com/auth/calendar'] });
     const calendar = google.calendar({ version: 'v3', auth });
-
     let startTime = taskData.start;
     let endTime = taskData.end;
-
-    if (!startTime) {
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(10, 0, 0, 0);
-        startTime = tomorrow.toISOString();
-    }
-
-    if (!endTime || endTime === startTime) {
-        const endDate = new Date(startTime);
-        endDate.setHours(endDate.getHours() + 1);
-        endTime = endDate.toISOString();
-    }
-
+    if (!startTime) { const t = new Date(); t.setDate(t.getDate() + 1); t.setHours(10, 0, 0, 0); startTime = t.toISOString(); }
+    if (!endTime || endTime === startTime) { const e = new Date(startTime); e.setHours(e.getHours() + 1); endTime = e.toISOString(); }
     const result = await calendar.events.insert({
         calendarId: targetCalId,
         resource: {
@@ -832,14 +911,37 @@ async function createCalendarEvent(taskData, userEmail) {
             reminders: { useDefault: true }
         }
     });
-
     console.log('Calendar Event Created! ID:', result.data.id);
+    return result.data;
+}
+
+// ========== Google Calendar 更新 ==========
+async function updateCalendarEvent(eventId, taskData) {
+    const rawKey = process.env.CALENDAR_PRIVATE_KEY || '';
+    const rawEmail = process.env.CALENDAR_EMAIL || '';
+    const rawCalId = process.env.MY_CALENDAR_ID || '';
+    if (!rawKey || !rawEmail || !rawCalId) throw new Error('Calendar 環境變數未設定');
+    const cleanKey = rawKey.trim().replace(/^['"]|['"]$/g, '').replace(/\\n/g, '\n');
+    const cleanEmail = rawEmail.trim().replace(/^['"]|['"]$/g, '');
+    const targetCalId = rawCalId.trim().replace(/^['"]|['"]$/g, '');
+    const auth = new google.auth.JWT({ email: cleanEmail, key: cleanKey, scopes: ['https://www.googleapis.com/auth/calendar'] });
+    const calendar = google.calendar({ version: 'v3', auth });
+    const result = await calendar.events.patch({
+        calendarId: targetCalId,
+        eventId: eventId,
+        resource: {
+            summary: taskData.title,
+            start: { dateTime: taskData.start, timeZone: 'Asia/Taipei' },
+            end: { dateTime: taskData.end, timeZone: 'Asia/Taipei' }
+        }
+    });
+    console.log('Calendar Event Updated! ID:', result.data.id);
     return result.data;
 }
 
 // ========== 回覆函式 ==========
 function reply(event, text) {
-    return client.replyMessage(event.replyToken, { type: 'text', text: text });
+    return client.replyMessage(event.replyToken, { type: 'text', text });
 }
 
 // ========== 初始化 ==========
@@ -850,22 +952,12 @@ async function init() {
             systemEnabled = false;
             console.log('系統狀態：已停用');
         }
-    } catch (e) {
-        console.log('讀取系統狀態失敗:', e.message);
-    }
-
+    } catch (e) { console.log('讀取系統狀態失敗:', e.message); }
     if (!BOT_USER_ID_CACHE) {
-        try {
-            const botInfo = await client.getBotInfo();
-            BOT_USER_ID_CACHE = botInfo.userId;
-            console.log('Bot User ID:', BOT_USER_ID_CACHE);
-        } catch (e) {
-            console.log('取得 Bot ID 失敗:', e.message);
-        }
+        try { const botInfo = await client.getBotInfo(); BOT_USER_ID_CACHE = botInfo.userId; console.log('Bot User ID:', BOT_USER_ID_CACHE); } catch (e) { console.log('取得 Bot ID 失敗:', e.message); }
     }
 }
 
-// ========== 啟動 ==========
 init().then(() => {
     app.listen(PORT, () => {
         console.log(`伺服器已啟動，port: ${PORT}`);
