@@ -165,7 +165,7 @@ app.post('/webhook', line.middleware(LINE_CONFIG), async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('MoAn Bot is running! v3.8');
+    res.send('MoAn Bot is running! v3.9');
 });
 
 // ========== 私訊處理（加入白名單檢查）==========
@@ -1002,28 +1002,32 @@ async function handleViewOtherTasks(event, msg) {
     return reply(event, text.trim());
 }
 
-// ========== Google Calendar（加入 debug log）==========
+// ========== Google Calendar（使用 CALENDAR_EMAIL + CALENDAR_PRIVATE_KEY）==========
 async function createCalendarEvent(eventData) {
     try {
         console.log('[CALENDAR] createCalendarEvent 被呼叫, eventData:', JSON.stringify(eventData));
-        const keyStr = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}';
         const calendarId = process.env.MY_CALENDAR_ID;
-        console.log(`[CALENDAR] calendarId: ${calendarId ? calendarId.substring(0, 20) + '...' : '(未設定)'}`);
-        console.log(`[CALENDAR] service account key 長度: ${keyStr.length}`);
+        const clientEmail = process.env.CALENDAR_EMAIL;
+        const privateKey = (process.env.CALENDAR_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+
+        console.log(`[CALENDAR] calendarId: ${calendarId || '(未設定)'}`);
+        console.log(`[CALENDAR] clientEmail: ${clientEmail || '(未設定)'}`);
+        console.log(`[CALENDAR] privateKey 長度: ${privateKey.length}`);
 
         if (!calendarId) {
             console.error('[CALENDAR] MY_CALENDAR_ID 未設定！');
             return null;
         }
-
-        const key = JSON.parse(keyStr);
-        if (!key.client_email) {
-            console.error('[CALENDAR] GOOGLE_SERVICE_ACCOUNT_KEY 缺少 client_email！');
+        if (!clientEmail) {
+            console.error('[CALENDAR] CALENDAR_EMAIL 未設定！');
+            return null;
+        }
+        if (!privateKey || privateKey.length < 100) {
+            console.error('[CALENDAR] CALENDAR_PRIVATE_KEY 未設定或不完整！');
             return null;
         }
 
-        console.log(`[CALENDAR] client_email: ${key.client_email}`);
-        const auth = new google.auth.JWT(key.client_email, null, key.private_key, ['https://www.googleapis.com/auth/calendar']);
+        const auth = new google.auth.JWT(clientEmail, null, privateKey, ['https://www.googleapis.com/auth/calendar']);
         const calendar = google.calendar({ version: 'v3', auth });
 
         const res = await calendar.events.insert({
@@ -1047,10 +1051,16 @@ async function createCalendarEvent(eventData) {
 
 async function updateCalendarEvent(eventId, eventData) {
     try {
-        const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}');
         const calendarId = process.env.MY_CALENDAR_ID;
-        if (!key.client_email || !calendarId) return;
-        const auth = new google.auth.JWT(key.client_email, null, key.private_key, ['https://www.googleapis.com/auth/calendar']);
+        const clientEmail = process.env.CALENDAR_EMAIL;
+        const privateKey = (process.env.CALENDAR_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+
+        if (!calendarId || !clientEmail || !privateKey) {
+            console.error('[CALENDAR] 更新失敗：缺少必要設定');
+            return;
+        }
+
+        const auth = new google.auth.JWT(clientEmail, null, privateKey, ['https://www.googleapis.com/auth/calendar']);
         const calendar = google.calendar({ version: 'v3', auth });
         await calendar.events.update({
             calendarId: calendarId,
@@ -1094,7 +1104,8 @@ async function init() {
 
     // 啟動時檢查行事曆設定
     console.log('[INIT] MY_CALENDAR_ID:', process.env.MY_CALENDAR_ID ? '已設定' : '❌ 未設定');
-    console.log('[INIT] GOOGLE_SERVICE_ACCOUNT_KEY:', process.env.GOOGLE_SERVICE_ACCOUNT_KEY ? `已設定 (${process.env.GOOGLE_SERVICE_ACCOUNT_KEY.length} chars)` : '❌ 未設定');
+    console.log('[INIT] CALENDAR_EMAIL:', process.env.CALENDAR_EMAIL ? '已設定' : '❌ 未設定');
+    console.log('[INIT] CALENDAR_PRIVATE_KEY:', process.env.CALENDAR_PRIVATE_KEY ? `已設定 (${process.env.CALENDAR_PRIVATE_KEY.length} chars)` : '❌ 未設定');
 }
 
 // ========== 啟動伺服器（即使 init 失敗也能啟動）==========
