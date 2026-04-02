@@ -534,11 +534,9 @@ async function executeConfirmedTasks(event, pendingRef, pendingData, userId, dis
                 scheduledStart: task.start || null, scheduledEnd: task.end || null,
                 timestamp: admin.firestore.FieldValue.serverTimestamp()
             });
-            // 儲存上下文
             setContext(userId, docRef.id, task.title);
             try {
                 const calEvent = await createCalendarEvent(task, userEmail);
-                // 儲存 calendarEventId 以便後續修改
                 await db.collection('chat_logs').doc(docRef.id).update({ calendarEventId: calEvent.id || null });
                 resultMsg += `「${task.title}」已加入待辦，行事曆也同步好了！\n`;
             } catch (calErr) {
@@ -555,67 +553,132 @@ async function executeConfirmedTasks(event, pendingRef, pendingData, userId, dis
     }
 }
 
-// ========== 修改任務 ==========
+// ========== 修改任務（已修正：關鍵字優先於上下文） ==========
 async function handleModifyTask(event, msg, userId, userEmail) {
     try {
         console.log('=== 修改任務開始 ===');
         console.log('訊息:', msg);
 
-        // 先檢查上下文（最近操作的任務）
-        const ctx = getContext(userId);
+        // 第一步：取得所有 active 任務
+        const snap = await db.collection('chat_logs')
+            .where('ownerId', '==', userId)
+            .where('status', '==', 'active').get();
+
+        if (snap.empty) return reply(event, '你目前沒有任何待辦事項可以修改。');
+
         let targetDoc = null;
         let targetData = null;
 
-        if (ctx) {
-            console.log('有上下文，任務:', ctx.taskTitle);
-            const docSnap = await db.collection('chat_logs').doc(ctx.taskId).get();
-            if (docSnap.exists && docSnap.data().status === 'active') {
-                targetDoc = docSnap;
-                targetData = docSnap.data();
+        // 第二步：從訊息中提取任務名稱關鍵字（移除所有時間/指令相關詞彙）
+        const msgClean = msg
+            .replace(/改到|改成|延後|提前|改時間|換到|調整到|移到|移至|搬到|時間改|修改|變更/g, '')
+            .replace(/上午|下午|早上|中午|晚上|今天|明天|後天|大後天/g, '')
+            .replace(/下週|下周|週一|週二|週三|週四|週五|週六|週日/g, '')
+            .replace(/星期一|星期二|星期三|星期四|星期五|星期六|星期日/g, '')
+            .replace(/\d{1,2}\s*[:.：]\s*\d{0,2}/g, '')
+            .replace(/\d{1,2}\s*點\s*(\d{1,2}\s*分)?/g, '')
+            .replace(/\d{1,4}\s*[/\-\.]\s*\d{1,2}(\s*[/\-\.]\s*\d{1,4})?/g, '')
+            .replace(/的|把|將|幫我|請|那個|這個|時間/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        console.log('清理後關鍵字:', msgClean, '(長度:', msgClean.length, ')');
+
+        // 第三步：如果訊息中有任務名稱關鍵字（>=2字），優先用關鍵字匹配
+        if (msgClean.length >= 2) {
+            let bestMatch = null;
+            let bestScore = 0;
+
+            snap.forEach(doc => {
+                const text = doc.data().text || '';
+                let score = 0;
+
+                // 完整包含（任一方向）→ 最高分
+                if (text.includes(msgClean) || msgClean.includes(text)) {
+                    score = 100;
+                } else {
+                    // 逐字匹配
+                    for (const char of msgClean) {
+                        if (text.includes(char)) score += 10;
+                    }
+                }
+
+                console.log(`  匹配: "${text}" → 分數: ${score}`);
+                if (score > bestScore) { bestScore = score; bestMatch = doc; }
+            });
+
+            if (bestMatch && bestScore >= 30) {
+                targetDoc = bestMatch;
+                targetData = bestMatch.data();
+                console.log('✅ 關鍵字匹配成功:', targetData.text, '分數:', bestScore);
             }
         }
 
-        // 如果沒有上下文，嘗試從訊息中找到目標任務
-        if (!targetDoc) {
-            const snap = await db.collection('chat_logs')
-                .where('ownerId', '==', userId)
-                .where('status', '==', 'active').get();
-
-            if (snap.empty) return reply(event, '你目前沒有任何待辦事項可以修改。');
-
-            // 如果只有一筆，直接用它
-            if (snap.size === 1) {
-                targetDoc = snap.docs[0];
-                targetData = targetDoc.data();
-            } else {
-                // 多筆，用關鍵字比對
-                const msgClean = msg.replace(/改到|改成|延後|提前|改時間|換到|調整到|移到|上午|下午|早上|中午|晚上|\d+點|\d+:\d+|\d+\/\d+|明天|後天|的|把|將/g, '').trim();
-                let bestMatch = null;
-                let bestScore = 0;
-
-                snap.forEach(doc => {
-                    const text = doc.data().text || '';
-                    let score = 0;
-                    if (msgClean && (text.includes(msgClean) || msgClean.includes(text))) score = 100;
-                    else { for (const char of msgClean) { if (text.includes(char)) score += 10; } }
-                    if (score > bestScore) { bestScore = score; bestMatch = doc; }
-                });
-
-                if (bestMatch && bestScore >= 20) {
-                    targetDoc = bestMatch;
-                    targetData = bestMatch.data();
-                } else {
-                    // 找不到，列出清單
-                    let listText = '你有多個待辦，請說清楚要改哪一個：\n';
-                    let i = 1;
-                    snap.forEach(doc => { listText += `${i}. ${doc.data().text}\n`; i++; });
-                    listText += '\n例如：「把荷卡那個改到下午3點」';
-                    return reply(event, listText);
+        // 第四步：關鍵字沒匹配到，且訊息很短（沒指定任務名）→ 才用上下文
+        if (!targetDoc && msgClean.length < 2) {
+            const ctx = getContext(userId);
+            if (ctx) {
+                console.log('用上下文任務:', ctx.taskTitle);
+                const docSnap = await db.collection('chat_logs').doc(ctx.taskId).get();
+                if (docSnap.exists && docSnap.data().status === 'active') {
+                    targetDoc = docSnap;
+                    targetData = docSnap.data();
+                    console.log('✅ 上下文匹配成功:', targetData.text);
                 }
             }
         }
 
-        // 用 AI 解析新的時間
+        // 第五步：只有一筆任務 → 直接用
+        if (!targetDoc && snap.size === 1) {
+            targetDoc = snap.docs[0];
+            targetData = targetDoc.data();
+            console.log('✅ 唯一任務:', targetData.text);
+        }
+
+        // 第六步：多筆但關鍵字匹配失敗 → 用 AI 判斷
+        if (!targetDoc) {
+            let taskList = '';
+            const taskMap = {};
+            snap.forEach(doc => {
+                taskMap[doc.id] = doc.data().text;
+                taskList += `ID:${doc.id} 標題:${doc.data().text}\n`;
+            });
+
+            const matchPrompt = `使用者說：「${msg}」
+以下是他的待辦清單：
+${taskList}
+請判斷使用者想修改哪個任務的時間，只回覆該任務的 ID。
+如果無法判斷，回覆 UNCLEAR。
+只回覆 ID 或 UNCLEAR，不要回覆其他文字。`;
+
+            try {
+                const r = await axios.post(GEMINI_URL, { contents: [{ parts: [{ text: matchPrompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
+                const aiResult = r.data.candidates[0].content.parts[0].text.trim();
+                console.log('AI 任務匹配結果:', aiResult);
+
+                if (aiResult !== 'UNCLEAR' && taskMap[aiResult]) {
+                    const aiDoc = snap.docs.find(d => d.id === aiResult);
+                    if (aiDoc) {
+                        targetDoc = aiDoc;
+                        targetData = aiDoc.data();
+                        console.log('✅ AI 匹配成功:', targetData.text);
+                    }
+                }
+            } catch (aiErr) {
+                console.error('AI 任務匹配失敗:', aiErr.message);
+            }
+        }
+
+        // 第七步：都找不到 → 列出清單讓使用者選
+        if (!targetDoc) {
+            let listText = '你有多個待辦，請說清楚要改哪一個：\n';
+            let i = 1;
+            snap.forEach(doc => { listText += `${i}. ${doc.data().text}\n`; i++; });
+            listText += '\n例如：「交辦JJ製作荷卡素材 改到下午3點」';
+            return reply(event, listText);
+        }
+
+        // 第八步：用 AI 解析新的時間
         const now = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
         const prompt = `現在台灣時間是 ${now}。
 使用者想修改一個任務的時間。任務標題是「${targetData.text}」。
@@ -704,7 +767,6 @@ async function handleCompleteTask(event, msg, userId) {
             });
             return reply(event, `「${bestMatch.text}」已標記為完成！`);
         }
-        // AI 判斷
         let taskList = ''; const taskMap = {};
         snap.forEach(doc => { taskMap[doc.id] = doc.data().text; taskList += `ID:${doc.id} 標題:${doc.data().text}\n`; });
         const prompt = `使用者說：「${msg}」\n以下是待辦清單：\n${taskList}\n請判斷要完成哪個任務，只回覆 ID。無法判斷回覆 UNCLEAR。`;
@@ -782,7 +844,6 @@ async function handleFileQuery(event, msg) {
         const snap = await db.collection('shared_files').get();
         if (snap.empty) return reply(event, '目前共享資料庫還沒有任何檔案，請管理員到後台新增。');
 
-        // 先用關鍵字比對
         let bestMatch = null;
         let bestScore = 0;
         const allFiles = [];
@@ -793,7 +854,6 @@ async function handleFileQuery(event, msg) {
             const searchText = `${d.name || ''} ${d.category || ''} ${d.description || ''} ${d.tags || ''}`;
             let score = 0;
 
-            // 逐字比對
             const msgClean = msg.replace(/資料|檔案|報告|簡報|提案|在哪|在哪裡|給我|連結|下載|的/g, '').trim();
             for (const char of msgClean) {
                 if (searchText.includes(char)) score += 10;
@@ -812,7 +872,6 @@ async function handleFileQuery(event, msg) {
             return reply(event, result);
         }
 
-        // 比對不到，用 AI 判斷
         let fileList = '';
         allFiles.forEach(f => {
             fileList += `名稱:${f.name} 分類:${f.category || '無'} 說明:${f.description || '無'}\n`;
@@ -846,7 +905,6 @@ ${fileList}
             console.error('AI 檔案判斷失敗:', aiErr.message);
         }
 
-        // 都找不到，列出所有檔案
         let listText = '沒有找到完全符合的檔案。以下是目前共享資料庫的所有檔案：\n\n';
         const categories = {};
         allFiles.forEach(f => {
