@@ -1,5 +1,5 @@
-// ===== MoAn AdTech Bot v4.5 =====
-// 改動：時間格式化、預設10:00、意圖增強、timeout、待辦詳情
+// ===== MoAn AdTech Bot v4.6 =====
+// 改動：說明依角色顯示、「怎麼用」觸發、檔案搜尋含tags/category、查共享檔案列出全部
 
 const express = require('express');
 const crypto = require('crypto');
@@ -45,7 +45,6 @@ function formatDateTimeFriendly(isoStr) {
     try {
         const d = new Date(isoStr);
         if (isNaN(d.getTime())) return isoStr;
-        // 轉換為台灣時間
         const tw = new Date(d.getTime() + (8 * 60 * 60 * 1000) + (d.getTimezoneOffset() * 60 * 1000));
         const month = tw.getMonth() + 1;
         const day = tw.getDate();
@@ -58,34 +57,52 @@ function formatDateTimeFriendly(isoStr) {
     }
 }
 
-// ===== 說明文字 =====
+// ===== 說明文字（依角色）=====
 function getHelpText(role) {
-    let text = '📋 MoAn AdTech Bot 指令說明\n\n';
-    text += '【任務管理】\n';
-    text += '• 新增任務：助理 提醒我[時間][事項]\n';
-    text += '  例：助理 4/5下午3點開會\n';
-    text += '  例：助理 明天要交報告\n';
-    text += '• 查詢任務：助理 我的待辦有哪些\n';
-    text += '• 查看詳情：助理 看一下[任務名稱]的內容\n';
-    text += '• 完成任務：助理 完成[任務名稱]\n';
-    text += '• 刪除任務：助理 刪除[任務名稱]\n';
-    text += '• 修改任務：助理 修改[任務名稱]改成[新內容]\n\n';
-    text += '【其他功能】\n';
-    text += '• 查詢檔案：助理 找[關鍵字]的檔案\n';
-    text += '• 綁定信箱：助理 綁定[email]\n';
-    text += '• 查看說明：助理 說明\n';
+    let text = '📋 MoAn AdTech Bot 使用說明\n';
+    text += '━━━━━━━━━━━━━━\n\n';
+
+    text += '【新增待辦】\n';
+    text += '• 助理 提醒我明天下午3點開會\n';
+    text += '• 助理 4/5要交報告\n';
+    text += '• 助理 下週一拜訪客戶\n\n';
+
+    text += '【查詢待辦】\n';
+    text += '• 助理 待辦有哪些\n';
+    text += '• 助理 看一下[任務名稱]的內容\n\n';
+
+    text += '【管理待辦】\n';
+    text += '• 助理 完成[任務名稱]\n';
+    text += '• 助理 刪除[任務名稱]\n';
+    text += '• 助理 修改[任務名稱]改成[新內容]\n\n';
+
+    text += '【查詢檔案】\n';
+    text += '• 助理 找[關鍵字]的檔案\n';
+    text += '• 助理 查共享檔案（列出全部）\n\n';
+
+    text += '【其他】\n';
+    text += '• 助理 綁定[email]\n';
+    text += '• 助理 怎麼用\n';
+
+    // 管理員 & 主管才看得到
     if (role === ROLE_ADMIN || role === ROLE_MANAGER) {
-        text += '\n【管理功能】\n';
-        text += '• 成員列表：助理 成員列表\n';
-        text += '• 設定主管：助理 設定[名字]為主管\n';
-        text += '• 取消主管：助理 取消[名字]的主管\n';
-        text += '• 查看他人任務：助理 查看[名字]的待辦\n';
+        text += '\n━━━━━━━━━━━━━━\n';
+        text += '🔒 以下為管理功能\n\n';
+        text += '【成員管理】\n';
+        text += '• 助理 成員列表\n';
+        text += '• 助理 查看[名字]的待辦\n';
+        if (role === ROLE_ADMIN) {
+            text += '• 助理 設定[名字]為主管\n';
+            text += '• 助理 取消[名字]的主管\n';
+        }
     }
+
     if (role === ROLE_ADMIN) {
         text += '\n【系統管理】\n';
-        text += '• 開啟系統：助理 開啟系統\n';
-        text += '• 關閉系統：助理 關閉系統\n';
+        text += '• 助理 開啟系統\n';
+        text += '• 助理 關閉系統\n';
     }
+
     return text;
 }
 
@@ -132,7 +149,7 @@ const app = express();
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-app.get('/', (req, res) => res.send('MoAn Bot is running! v4.5'));
+app.get('/', (req, res) => res.send('MoAn Bot is running! v4.6'));
 
 app.post('/webhook', async (req, res) => {
     try {
@@ -241,8 +258,8 @@ async function handlePrivateMessage(event) {
 
 // ===== 意圖分類（增強版）=====
 async function classifyIntent(msg) {
-    // 正則快速匹配
-    if (/說明|help|指令|幫助/.test(msg)) return 'HELP';
+    // 正則快速匹配 — 順序很重要，越明確的放越前面
+    if (/怎麼用|說明|help|指令|幫助|使用說明/.test(msg)) return 'HELP';
     if (/成員列表|所有成員|使用者列表/.test(msg)) return 'MEMBER_LIST';
     if (/設定.*主管|升級.*主管/.test(msg)) return 'SET_MANAGER';
     if (/取消.*主管|移除.*主管/.test(msg)) return 'REMOVE_MANAGER';
@@ -253,22 +270,22 @@ async function classifyIntent(msg) {
     // 查看待辦詳情
     if (/看一下.*的?(內容|詳情|備註|完整|全部)|查看.*的?(內容|詳情|備註|完整|全部)|詳情.*任務/.test(msg)) return 'TASK_DETAIL';
 
+    // 檔案查詢 — 有「檔案」或「共享檔案」關鍵字
+    if (/找.*檔案|查.*檔案|檔案.*查詢|共享檔案|查檔案/.test(msg)) return 'FILE_QUERY';
+
     if (/完成.*任務|完成.*待辦|已完成/.test(msg)) return 'COMPLETE_TASK';
     if (/刪除.*任務|刪除.*待辦|移除.*任務/.test(msg)) return 'DELETE_TASK';
     if (/修改.*任務|更改.*任務|變更.*待辦/.test(msg)) return 'MODIFY_TASK';
     if (/待辦|任務.*有哪些|查詢.*任務|我的任務/.test(msg)) return 'QUERY_TASKS';
-    if (/找.*檔案|查.*檔案|檔案.*查詢|共享檔案/.test(msg)) return 'FILE_QUERY';
     if (/綁定.*信箱|綁定.*email|綁定.*mail/i.test(msg)) return 'BIND_EMAIL';
     if (/提醒|新增.*任務|新增.*待辦|加入.*待辦|記住|幫我記|建立.*任務/.test(msg)) return 'ADD_TASK';
 
-    // 日期開頭的句子 → 高機率是新增任務
+    // 日期開頭 → 高機率是新增任務
     if (/^(\d{1,2}\/\d{1,2}|明天|後天|大後天|下週|下禮拜|今天|星期[一二三四五六日天]|周[一二三四五六日天])/.test(msg)) return 'ADD_TASK';
-    // 包含日期時間描述 → 高機率是新增任務
     if (/\d{1,2}月\d{1,2}[日號]|明天.*[要去到]|後天.*[要去到]/.test(msg)) return 'ADD_TASK';
-    // 「要去」「要做」等行動詞 → 可能是新增任務
     if (/[要去做到].*[開會|報告|提案|簡報|拜訪|出差|面試|聚餐|吃飯]/.test(msg)) return 'ADD_TASK';
 
-    // Gemini 分類（含 timeout）
+    // Gemini 分類
     try {
         const result = await callGemini(`請分類以下使用者指令的意圖，只回覆以下其中一個分類代碼：
 ADD_TASK（新增任務/提醒/行程）
@@ -277,9 +294,9 @@ TASK_DETAIL（查看單一任務的詳細內容或備註）
 COMPLETE_TASK（完成任務）
 DELETE_TASK（刪除任務）
 MODIFY_TASK（修改任務）
-FILE_QUERY（查詢檔案）
+FILE_QUERY（查詢檔案或共享檔案）
 BIND_EMAIL（綁定信箱）
-HELP（查看說明）
+HELP（查看說明或怎麼用）
 CHAT（一般閒聊）
 
 使用者指令：「${msg}」
@@ -530,7 +547,6 @@ async function handleQueryTasks(event, user) {
 // ===== 查看單一任務詳情 =====
 async function handleTaskDetail(event, user, command) {
     try {
-        // 提取關鍵字
         const keyword = command
             .replace(/看一下|查看|的內容|的詳情|的備註|的完整|的全部|內容|詳情|備註|完整|全部/g, '')
             .trim();
@@ -554,7 +570,6 @@ async function handleTaskDetail(event, user, command) {
         }
 
         if (!targetDoc) {
-            // 也搜尋已完成的
             const allSnapshot = await db.collection('tasks')
                 .where('userId', '==', user.userId)
                 .get();
@@ -579,6 +594,7 @@ async function handleTaskDetail(event, user, command) {
         if (t.end) text += ` ~ ${formatDateTimeFriendly(t.end)}`;
         if (t.start) text += '\n';
         if (t.note) text += `📝 備註：${t.note}\n`;
+        else text += `📝 備註：（無）\n`;
         if (t.source) {
             const sourceMap = { group: '👥 群組', private: '💬 私訊', web: '📋 後台' };
             text += `📎 來源：${sourceMap[t.source] || t.source}\n`;
@@ -719,10 +735,14 @@ async function handleModifyTask(event, user, command) {
     }
 }
 
-// ===== 檔案查詢 =====
+// ===== 檔案查詢（含 tags、category 搜尋）=====
 async function handleFileQuery(event, user, command) {
     try {
-        const keyword = command.replace(/找|查|檔案|查詢|共享|的/g, '').trim();
+        // 提取關鍵字：移除觸發詞
+        const keyword = command
+            .replace(/找|查|檔案|查詢|共享|的|有沒有|有無/g, '')
+            .trim();
+
         const snapshot = await db.collection('shared_files').get();
 
         if (snapshot.empty) {
@@ -731,12 +751,17 @@ async function handleFileQuery(event, user, command) {
         }
 
         let files = snapshot.docs.map(d => d.data());
+
+        // 有關鍵字就過濾，沒有就列出全部
         if (keyword) {
-            files = files.filter(f =>
-                (f.fileName && f.fileName.includes(keyword)) ||
-                (f.name && f.name.includes(keyword)) ||
-                (f.description && f.description.includes(keyword))
-            );
+            const kw = keyword.toLowerCase();
+            files = files.filter(f => {
+                const name = (f.name || f.fileName || '').toLowerCase();
+                const desc = (f.description || '').toLowerCase();
+                const cat = (f.category || '').toLowerCase();
+                const tags = Array.isArray(f.tags) ? f.tags.join(' ').toLowerCase() : (f.tags || '').toLowerCase();
+                return name.includes(kw) || desc.includes(kw) || cat.includes(kw) || tags.includes(kw);
+            });
         }
 
         if (files.length === 0) {
@@ -744,14 +769,30 @@ async function handleFileQuery(event, user, command) {
             return;
         }
 
-        let text = `📁 共享檔案${keyword ? `（關鍵字：${keyword}）` : ''}：\n\n`;
-        files.slice(0, 10).forEach((f, i) => {
-            text += `${i + 1}. ${f.name || f.fileName || '未命名'}`;
+        const totalCount = files.length;
+        const showFiles = files.slice(0, 10);
+
+        let text = keyword
+            ? `📁 共享檔案（關鍵字：${keyword}）：\n\n`
+            : `📁 全部共享檔案（共 ${totalCount} 筆）：\n\n`;
+
+        showFiles.forEach((f, i) => {
+            const displayName = f.name || f.fileName || '未命名';
+            const cat = f.category ? `【${f.category}】` : '';
+            text += `${i + 1}. ${cat}${displayName}`;
             if (f.description) text += `\n   📝 ${f.description}`;
+            // 顯示標籤
+            const tags = Array.isArray(f.tags) ? f.tags : [];
+            if (tags.length > 0) text += `\n   🏷️ ${tags.map(t => '#' + t).join(' ')}`;
             if (f.url) text += `\n   🔗 ${f.url}`;
-            text += '\n';
+            text += '\n\n';
         });
-        await reply(event, text);
+
+        if (totalCount > 10) {
+            text += `...還有 ${totalCount - 10} 筆，請到後台查看完整列表`;
+        }
+
+        await reply(event, text.trim());
     } catch (err) {
         console.error('檔案查詢錯誤:', err);
         await reply(event, '❌ 查詢檔案時發生錯誤。');
@@ -879,7 +920,7 @@ async function init() {
             systemEnabled = configDoc.data().enabled !== false;
         }
         console.log('[INIT] 系統狀態:', systemEnabled ? '啟用中' : '已停用');
-        console.log('[INIT] ✅ MoAn Bot v4.5 初始化完成');
+        console.log('[INIT] ✅ MoAn Bot v4.6 初始化完成');
     } catch (err) {
         console.error('[INIT] 初始化錯誤:', err.message);
     }
