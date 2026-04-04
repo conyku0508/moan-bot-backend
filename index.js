@@ -1,12 +1,11 @@
-// ===== MoAn AdTech Bot v4.3 =====
-// 改動：getCalendarAuth() 從環境變數 GOOGLE_SA_BASE64 讀取 service account JSON（base64 編碼）
+// ===== MoAn AdTech Bot v4.4 =====
+// 移除 Google Calendar 同步，專注核心功能
 
 const express = require('express');
 const crypto = require('crypto');
 const line = require('@line/bot-sdk');
 const admin = require('firebase-admin');
 const axios = require('axios');
-const { google } = require('googleapis');
 
 // ===== 環境變數 =====
 const LINE_CONFIG = {
@@ -32,31 +31,6 @@ const db = admin.firestore();
 
 // ===== LINE SDK =====
 const lineClient = new line.Client(LINE_CONFIG);
-
-// ===== Google Calendar 認證（從環境變數 base64 解碼）=====
-function getCalendarAuth() {
-    const base64 = process.env.GOOGLE_SA_BASE64;
-    if (!base64) {
-        console.error('[CALENDAR] ❌ 環境變數 GOOGLE_SA_BASE64 未設定');
-        return null;
-    }
-    try {
-        const sa = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
-        console.log('[CALENDAR] clientEmail:', sa.client_email);
-        console.log('[CALENDAR] privateKey 長度:', sa.private_key ? sa.private_key.length : 0);
-        const auth = new google.auth.JWT(
-            sa.client_email,
-            null,
-            sa.private_key,
-            ['https://www.googleapis.com/auth/calendar']
-        );
-        const calendarId = process.env.MY_CALENDAR_ID || 'conyku0508@gmail.com';
-        return { auth, calendarId };
-    } catch (err) {
-        console.error('[CALENDAR] ❌ 解析 GOOGLE_SA_BASE64 失敗:', err.message);
-        return null;
-    }
-}
 
 // ===== 全域變數 =====
 let systemEnabled = true;
@@ -109,12 +83,12 @@ async function getOrCreateUser(userId, displayName) {
         }
         return data;
     }
-    const isAdmin = userId === ADMIN_USER_ID;
+    const isAdminUser = userId === ADMIN_USER_ID;
     const newUser = {
         userId,
         displayName: displayName || 'Unknown',
-        role: isAdmin ? ROLE_ADMIN : ROLE_MEMBER,
-        approved: isAdmin,
+        role: isAdminUser ? ROLE_ADMIN : ROLE_MEMBER,
+        approved: isAdminUser,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -133,7 +107,7 @@ app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
 // 健康檢查
-app.get('/', (req, res) => res.send('MoAn Bot is running! v4.3'));
+app.get('/', (req, res) => res.send('MoAn Bot is running! v4.4'));
 
 // Webhook
 app.post('/webhook', async (req, res) => {
@@ -171,7 +145,6 @@ async function handleGroupMessage(event) {
     const userId = event.source.userId;
     const groupId = event.source.groupId;
 
-    // 儲存群組對話紀錄
     const triggerPatterns = [/^助理[\s,，]*/i, /^小助理[\s,，]*/i, /^業務助理[\s,，]*/i];
     let triggered = false;
     let command = msg;
@@ -185,7 +158,6 @@ async function handleGroupMessage(event) {
     }
 
     if (!triggered) {
-        // 記錄群組訊息
         try {
             let profile;
             try { profile = await lineClient.getGroupMemberProfile(groupId, userId); } catch (e) { profile = { displayName: 'Unknown' }; }
@@ -200,15 +172,11 @@ async function handleGroupMessage(event) {
         return;
     }
 
-    // 取得使用者資料
     let profile;
     try { profile = await lineClient.getGroupMemberProfile(groupId, userId); } catch (e) { profile = { displayName: 'Unknown' }; }
     const user = await getOrCreateUser(userId, profile.displayName);
 
-    console.log(`群組關鍵字觸發：「${command}」 + 指令：「${msg}」`);
-    console.log(`使用者: ${userId}, 訊息: 「${msg}」, 意圖: ADD_TASK`);
-
-    // 群組指令處理
+    console.log(`群組關鍵字觸發：「${command}」`);
     await handleDirectMessage(event, user, command, true);
 }
 
@@ -221,25 +189,21 @@ async function handlePrivateMessage(event) {
     try { profile = await lineClient.getProfile(userId); } catch (e) { profile = { displayName: 'Unknown' }; }
     const user = await getOrCreateUser(userId, profile.displayName);
 
-    // 白名單檢查
     if (!user.approved && !isAdmin(user)) {
         await reply(event, '⚠️ 您尚未被核准使用此系統。\n請聯繫管理員開通權限。');
         return;
     }
 
-    // 系統停用檢查
     if (!systemEnabled && !isAdmin(user)) {
         await reply(event, '⚠️ 系統目前已暫停服務，請稍後再試。');
         return;
     }
 
-    // 檢查是否為確認/取消操作
     if (/^(確認|取消|是|否|yes|no)$/i.test(msg)) {
         await handleConfirmOrCancel(event, user, msg);
         return;
     }
 
-    // 移除觸發詞
     let command = msg;
     const triggerPatterns = [/^助理[\s,，]*/i, /^小助理[\s,，]*/i, /^業務助理[\s,，]*/i];
     for (const pattern of triggerPatterns) {
@@ -254,7 +218,6 @@ async function handlePrivateMessage(event) {
 
 // ===== 意圖分類 =====
 async function classifyIntent(msg) {
-    // 正則快速匹配
     if (/說明|help|指令|幫助/.test(msg)) return 'HELP';
     if (/成員列表|所有成員|使用者列表/.test(msg)) return 'MEMBER_LIST';
     if (/設定.*主管|升級.*主管/.test(msg)) return 'SET_MANAGER';
@@ -270,7 +233,6 @@ async function classifyIntent(msg) {
     if (/綁定.*信箱|綁定.*email|綁定.*mail/i.test(msg)) return 'BIND_EMAIL';
     if (/提醒|新增.*任務|新增.*待辦|加入.*待辦|記住|幫我記|建立.*任務/.test(msg)) return 'ADD_TASK';
 
-    // Gemini 分類
     try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
         const resp = await axios.post(url, {
@@ -294,7 +256,7 @@ CHAT（一般閒聊）
     } catch (e) {
         console.error('Gemini 分類錯誤:', e.message);
     }
-    return 'ADD_TASK'; // 預設
+    return 'ADD_TASK';
 }
 
 // ===== 核心指令處理 =====
@@ -344,12 +306,18 @@ async function handleDirectMessage(event, user, command, isGroup) {
             else await reply(event, '⚠️ 您沒有權限查看他人任務。');
             break;
         case 'ENABLE_SYSTEM':
-            if (isAdmin(user)) { systemEnabled = true; await reply(event, '✅ 系統已開啟！'); }
-            else await reply(event, '⚠️ 只有管理員可以開啟系統。');
+            if (isAdmin(user)) {
+                systemEnabled = true;
+                await db.collection('settings').doc('system').set({ enabled: true }, { merge: true });
+                await reply(event, '✅ 系統已開啟！');
+            } else await reply(event, '⚠️ 只有管理員可以開啟系統。');
             break;
         case 'DISABLE_SYSTEM':
-            if (isAdmin(user)) { systemEnabled = false; await reply(event, '🔒 系統已關閉。'); }
-            else await reply(event, '⚠️ 只有管理員可以關閉系統。');
+            if (isAdmin(user)) {
+                systemEnabled = false;
+                await db.collection('settings').doc('system').set({ enabled: false }, { merge: true });
+                await reply(event, '🔒 系統已關閉。');
+            } else await reply(event, '⚠️ 只有管理員可以關閉系統。');
             break;
         case 'CHAT':
         default:
@@ -389,7 +357,6 @@ async function handleAddTask(event, user, command, isGroup) {
         const geminiText = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         console.log('[ADD_TASK] Gemini 回傳:', geminiText);
 
-        // 清理 Gemini 回傳的 markdown 標記
         let cleanJson = geminiText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         const tasks = JSON.parse(cleanJson);
         console.log('[ADD_TASK] 解析結果:', JSON.stringify(tasks));
@@ -400,7 +367,6 @@ async function handleAddTask(event, user, command, isGroup) {
         }
 
         if (isGroup) {
-            // 群組直接建立任務
             for (const task of tasks) {
                 const taskData = {
                     userId: user.userId,
@@ -412,28 +378,13 @@ async function handleAddTask(event, user, command, isGroup) {
                     createdAt: admin.firestore.FieldValue.serverTimestamp(),
                     source: 'group'
                 };
-                const docRef = await db.collection('tasks').add(taskData);
-
-                // 同步到 Google Calendar
-                let calendarSynced = false;
-                if (task.start) {
-                    console.log('[CALENDAR] 建立事件中...');
-                    const eventId = await createCalendarEvent(task.title, task.start, task.end);
-                    if (eventId) {
-                        await docRef.update({ calendarEventId: eventId });
-                        calendarSynced = true;
-                        console.log('[CALENDAR] ✅ 事件已建立，ID:', eventId);
-                    }
-                }
+                await db.collection('tasks').add(taskData);
 
                 let replyText = `✅ 已新增任務：${task.title}`;
                 if (task.start) replyText += `\n📅 ${task.start}`;
-                if (calendarSynced) replyText += `\n📅 行事曆已同步！`;
-                else if (task.start) replyText += `\n⚠️ 行事曆同步失敗`;
                 await reply(event, replyText);
             }
         } else {
-            // 私訊：先存入待確認，等使用者確認
             userContext[user.userId] = { tasks, command, timestamp: Date.now() };
             await db.collection('pending_proposals').doc(user.userId).set({
                 tasks,
@@ -488,23 +439,10 @@ async function executeConfirmedTasks(event, user, tasks) {
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             source: 'private'
         };
-        const docRef = await db.collection('tasks').add(taskData);
-
-        let calendarSynced = false;
-        if (task.start) {
-            console.log('[CALENDAR] 建立事件中...');
-            const eventId = await createCalendarEvent(task.title, task.start, task.end);
-            if (eventId) {
-                await docRef.update({ calendarEventId: eventId });
-                calendarSynced = true;
-                console.log('[CALENDAR] ✅ 事件已建立，ID:', eventId);
-            }
-        }
+        await db.collection('tasks').add(taskData);
 
         let replyText = `✅ 已新增任務：${task.title}`;
         if (task.start) replyText += `\n📅 ${task.start}`;
-        if (calendarSynced) replyText += `\n📅 行事曆已同步！`;
-        else if (task.start) replyText += `\n⚠️ 行事曆同步失敗`;
         await reply(event, replyText);
     }
 }
@@ -515,8 +453,6 @@ async function handleQueryTasks(event, user) {
         const snapshot = await db.collection('tasks')
             .where('userId', '==', user.userId)
             .where('completed', '==', false)
-            .orderBy('createdAt', 'desc')
-            .limit(20)
             .get();
 
         if (snapshot.empty) {
@@ -524,16 +460,23 @@ async function handleQueryTasks(event, user) {
             return;
         }
 
+        // 手動排序，避免需要複合索引
+        const docs = snapshot.docs.sort((a, b) => {
+            const aTime = a.data().createdAt?.toMillis?.() || 0;
+            const bTime = b.data().createdAt?.toMillis?.() || 0;
+            return bTime - aTime;
+        });
+
         let text = '📋 您的待辦任務：\n\n';
-        snapshot.docs.forEach((doc, i) => {
+        docs.slice(0, 20).forEach((doc, i) => {
             const t = doc.data();
             text += `${i + 1}. ${t.title}`;
             if (t.start) text += `\n   📅 ${t.start}`;
             text += '\n';
         });
-        // 存入上下文
+
         userContext[user.userId] = {
-            lastQueryTasks: snapshot.docs.map(d => ({ id: d.id, ...d.data() })),
+            lastQueryTasks: docs.map(d => ({ id: d.id, ...d.data() })),
             timestamp: Date.now()
         };
         await reply(event, text);
@@ -651,17 +594,6 @@ async function handleModifyTask(event, user, command) {
         if (parsed.newEnd) updates.end = parsed.newEnd;
 
         await targetDoc.ref.update(updates);
-
-        // 同步更新 Calendar
-        if (targetDoc.data().calendarEventId && (parsed.newStart || parsed.newTitle)) {
-            await updateCalendarEvent(
-                targetDoc.data().calendarEventId,
-                parsed.newTitle || targetDoc.data().title,
-                parsed.newStart || targetDoc.data().start,
-                parsed.newEnd || targetDoc.data().end
-            );
-        }
-
         await reply(event, `✅ 已修改任務：${parsed.newTitle || targetDoc.data().title}`);
     } catch (err) {
         console.error('修改任務錯誤:', err);
@@ -673,10 +605,7 @@ async function handleModifyTask(event, user, command) {
 async function handleFileQuery(event, user, command) {
     try {
         const keyword = command.replace(/找|查|檔案|查詢|共享|的/g, '').trim();
-        const snapshot = await db.collection('shared_files')
-            .orderBy('createdAt', 'desc')
-            .limit(50)
-            .get();
+        const snapshot = await db.collection('shared_files').get();
 
         if (snapshot.empty) {
             await reply(event, '📁 目前沒有共享檔案。');
@@ -770,8 +699,6 @@ async function handleViewOtherTasks(event, command) {
     const taskSnapshot = await db.collection('tasks')
         .where('userId', '==', targetUserId)
         .where('completed', '==', false)
-        .orderBy('createdAt', 'desc')
-        .limit(20)
         .get();
 
     if (taskSnapshot.empty) {
@@ -804,66 +731,6 @@ async function handleChat(event, user, command) {
     }
 }
 
-// ===== Google Calendar 建立事件 =====
-async function createCalendarEvent(title, start, end) {
-    try {
-        const calAuth = getCalendarAuth();
-        if (!calAuth) {
-            console.error('[CALENDAR] 無法取得認證');
-            return null;
-        }
-        const { auth, calendarId } = calAuth;
-        console.log('[CALENDAR] calendarId:', calendarId);
-
-        const calendar = google.calendar({ version: 'v3', auth });
-        const event = {
-            summary: title,
-            start: { dateTime: start, timeZone: 'Asia/Taipei' },
-            end: { dateTime: end || start, timeZone: 'Asia/Taipei' }
-        };
-
-        const res = await calendar.events.insert({
-            calendarId,
-            resource: event
-        });
-        console.log('[CALENDAR] ✅ 事件建立成功，ID:', res.data.id);
-        return res.data.id;
-    } catch (err) {
-        console.error('[CALENDAR] 建立失敗:', err.message);
-        if (err.response) {
-            console.error('[CALENDAR] API 回應:', JSON.stringify(err.response.data));
-        }
-        return null;
-    }
-}
-
-// ===== Google Calendar 更新事件 =====
-async function updateCalendarEvent(eventId, title, start, end) {
-    try {
-        const calAuth = getCalendarAuth();
-        if (!calAuth) return null;
-        const { auth, calendarId } = calAuth;
-
-        const calendar = google.calendar({ version: 'v3', auth });
-        const event = {
-            summary: title,
-            start: { dateTime: start, timeZone: 'Asia/Taipei' },
-            end: { dateTime: end || start, timeZone: 'Asia/Taipei' }
-        };
-
-        const res = await calendar.events.update({
-            calendarId,
-            eventId,
-            resource: event
-        });
-        console.log('[CALENDAR] ✅ 事件更新成功');
-        return res.data.id;
-    } catch (err) {
-        console.error('[CALENDAR] 更新失敗:', err.message);
-        return null;
-    }
-}
-
 // ===== 回覆訊息 =====
 async function reply(event, text) {
     try {
@@ -876,7 +743,6 @@ async function reply(event, text) {
 // ===== 初始化 =====
 async function init() {
     try {
-        // 取得 Bot User ID
         if (!BOT_USER_ID_CACHE) {
             try {
                 const profile = await lineClient.getBotInfo();
@@ -889,28 +755,14 @@ async function init() {
         console.log('[INIT] Admin User ID:', ADMIN_USER_ID);
         console.log('[INIT] Gemini Model:', GEMINI_MODEL);
 
-        // 讀取系統設定
         const configDoc = await db.collection('settings').doc('system').get();
         if (configDoc.exists) {
             systemEnabled = configDoc.data().enabled !== false;
         }
         console.log('[INIT] 系統狀態:', systemEnabled ? '啟用中' : '已停用');
-
-        // 測試 Calendar 連線
-        console.log('[INIT] 測試 Google Calendar 連線...');
-        console.log('[INIT] GOOGLE_SA_BASE64 長度:', (process.env.GOOGLE_SA_BASE64 || '').length);
-        console.log('[INIT] MY_CALENDAR_ID:', process.env.MY_CALENDAR_ID || '未設定');
-
-        const calAuth = getCalendarAuth();
-        if (calAuth) {
-            const calendar = google.calendar({ version: 'v3', auth: calAuth.auth });
-            await calendar.calendarList.list({ maxResults: 1 });
-            console.log('[INIT] ✅ Google Calendar 連線成功！');
-        } else {
-            console.log('[INIT] ❌ Google Calendar 認證未設定');
-        }
+        console.log('[INIT] ✅ MoAn Bot v4.4 初始化完成（無行事曆同步）');
     } catch (err) {
-        console.error('[INIT] ❌ Google Calendar 連線失敗:', err.message);
+        console.error('[INIT] 初始化錯誤:', err.message);
     }
 }
 
