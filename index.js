@@ -1,5 +1,5 @@
-// ===== MoAn AdTech Bot v4.4 =====
-// 移除 Google Calendar 同步，專注核心功能
+// ===== MoAn AdTech Bot v4.5 =====
+// 改動：時間格式化、預設10:00、意圖增強、timeout、待辦詳情
 
 const express = require('express');
 const crypto = require('crypto');
@@ -37,12 +37,36 @@ let systemEnabled = true;
 let BOT_USER_ID_CACHE = BOT_USER_ID || null;
 const userContext = {};
 
+// ===== 時間格式化工具 =====
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+
+function formatDateTimeFriendly(isoStr) {
+    if (!isoStr) return '';
+    try {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return isoStr;
+        // 轉換為台灣時間
+        const tw = new Date(d.getTime() + (8 * 60 * 60 * 1000) + (d.getTimezoneOffset() * 60 * 1000));
+        const month = tw.getMonth() + 1;
+        const day = tw.getDate();
+        const weekday = WEEKDAYS[tw.getDay()];
+        const hour = String(tw.getHours()).padStart(2, '0');
+        const minute = String(tw.getMinutes()).padStart(2, '0');
+        return `${month}/${day}（${weekday}）${hour}:${minute}`;
+    } catch (e) {
+        return isoStr;
+    }
+}
+
 // ===== 說明文字 =====
 function getHelpText(role) {
     let text = '📋 MoAn AdTech Bot 指令說明\n\n';
     text += '【任務管理】\n';
     text += '• 新增任務：助理 提醒我[時間][事項]\n';
+    text += '  例：助理 4/5下午3點開會\n';
+    text += '  例：助理 明天要交報告\n';
     text += '• 查詢任務：助理 我的待辦有哪些\n';
+    text += '• 查看詳情：助理 看一下[任務名稱]的內容\n';
     text += '• 完成任務：助理 完成[任務名稱]\n';
     text += '• 刪除任務：助理 刪除[任務名稱]\n';
     text += '• 修改任務：助理 修改[任務名稱]改成[新內容]\n\n';
@@ -63,13 +87,6 @@ function getHelpText(role) {
         text += '• 關閉系統：助理 關閉系統\n';
     }
     return text;
-}
-
-// ===== 日期時間偵測 =====
-function detectDateTime(msg) {
-    const hasDate = /\d{1,2}月\d{1,2}[日號]|明天|後天|大後天|下週|下禮拜|星期[一二三四五六日天]|周[一二三四五六日天]|\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(msg);
-    const hasTime = /\d{1,2}[點時:：]\d{0,2}分?|上午|下午|早上|中午|晚上|傍晚/.test(msg);
-    return { hasDate, hasTime };
 }
 
 // ===== 使用者管理 =====
@@ -101,15 +118,22 @@ function isAdmin(user) { return user.role === ROLE_ADMIN; }
 function isManager(user) { return user.role === ROLE_MANAGER; }
 function isPrivileged(user) { return user.role === ROLE_ADMIN || user.role === ROLE_MANAGER; }
 
+// ===== Gemini 呼叫（含 timeout）=====
+async function callGemini(prompt, timeoutMs = 15000) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    const resp = await axios.post(url, {
+        contents: [{ parts: [{ text: prompt }] }]
+    }, { timeout: timeoutMs });
+    return resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+}
+
 // ===== Express 伺服器 =====
 const app = express();
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-// 健康檢查
-app.get('/', (req, res) => res.send('MoAn Bot is running! v4.4'));
+app.get('/', (req, res) => res.send('MoAn Bot is running! v4.5'));
 
-// Webhook
 app.post('/webhook', async (req, res) => {
     try {
         const signature = req.headers['x-line-signature'];
@@ -162,8 +186,7 @@ async function handleGroupMessage(event) {
             let profile;
             try { profile = await lineClient.getGroupMemberProfile(groupId, userId); } catch (e) { profile = { displayName: 'Unknown' }; }
             await db.collection('group_logs').add({
-                groupId,
-                userId,
+                groupId, userId,
                 displayName: profile.displayName,
                 message: msg,
                 createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -176,7 +199,7 @@ async function handleGroupMessage(event) {
     try { profile = await lineClient.getGroupMemberProfile(groupId, userId); } catch (e) { profile = { displayName: 'Unknown' }; }
     const user = await getOrCreateUser(userId, profile.displayName);
 
-    console.log(`群組關鍵字觸發：「${command}」`);
+    console.log(`群組觸發：「${command}」`);
     await handleDirectMessage(event, user, command, true);
 }
 
@@ -216,8 +239,9 @@ async function handlePrivateMessage(event) {
     await handleDirectMessage(event, user, command, false);
 }
 
-// ===== 意圖分類 =====
+// ===== 意圖分類（增強版）=====
 async function classifyIntent(msg) {
+    // 正則快速匹配
     if (/說明|help|指令|幫助/.test(msg)) return 'HELP';
     if (/成員列表|所有成員|使用者列表/.test(msg)) return 'MEMBER_LIST';
     if (/設定.*主管|升級.*主管/.test(msg)) return 'SET_MANAGER';
@@ -225,6 +249,10 @@ async function classifyIntent(msg) {
     if (/查看.*的待辦|查看.*的任務/.test(msg)) return 'VIEW_OTHER_TASKS';
     if (/開啟系統/.test(msg)) return 'ENABLE_SYSTEM';
     if (/關閉系統/.test(msg)) return 'DISABLE_SYSTEM';
+
+    // 查看待辦詳情
+    if (/看一下.*的?(內容|詳情|備註|完整|全部)|查看.*的?(內容|詳情|備註|完整|全部)|詳情.*任務/.test(msg)) return 'TASK_DETAIL';
+
     if (/完成.*任務|完成.*待辦|已完成/.test(msg)) return 'COMPLETE_TASK';
     if (/刪除.*任務|刪除.*待辦|移除.*任務/.test(msg)) return 'DELETE_TASK';
     if (/修改.*任務|更改.*任務|變更.*待辦/.test(msg)) return 'MODIFY_TASK';
@@ -233,12 +261,19 @@ async function classifyIntent(msg) {
     if (/綁定.*信箱|綁定.*email|綁定.*mail/i.test(msg)) return 'BIND_EMAIL';
     if (/提醒|新增.*任務|新增.*待辦|加入.*待辦|記住|幫我記|建立.*任務/.test(msg)) return 'ADD_TASK';
 
+    // 日期開頭的句子 → 高機率是新增任務
+    if (/^(\d{1,2}\/\d{1,2}|明天|後天|大後天|下週|下禮拜|今天|星期[一二三四五六日天]|周[一二三四五六日天])/.test(msg)) return 'ADD_TASK';
+    // 包含日期時間描述 → 高機率是新增任務
+    if (/\d{1,2}月\d{1,2}[日號]|明天.*[要去到]|後天.*[要去到]/.test(msg)) return 'ADD_TASK';
+    // 「要去」「要做」等行動詞 → 可能是新增任務
+    if (/[要去做到].*[開會|報告|提案|簡報|拜訪|出差|面試|聚餐|吃飯]/.test(msg)) return 'ADD_TASK';
+
+    // Gemini 分類（含 timeout）
     try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-        const resp = await axios.post(url, {
-            contents: [{ parts: [{ text: `請分類以下使用者指令的意圖，只回覆以下其中一個分類代碼：
-ADD_TASK（新增任務/提醒）
+        const result = await callGemini(`請分類以下使用者指令的意圖，只回覆以下其中一個分類代碼：
+ADD_TASK（新增任務/提醒/行程）
 QUERY_TASKS（查詢待辦）
+TASK_DETAIL（查看單一任務的詳細內容或備註）
 COMPLETE_TASK（完成任務）
 DELETE_TASK（刪除任務）
 MODIFY_TASK（修改任務）
@@ -249,12 +284,10 @@ CHAT（一般閒聊）
 
 使用者指令：「${msg}」
 
-只回覆分類代碼，不要其他文字。` }] }]
-        });
-        const result = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+只回覆分類代碼，不要其他文字。`, 10000);
         if (result && /^[A-Z_]+$/.test(result)) return result;
     } catch (e) {
-        console.error('Gemini 分類錯誤:', e.message);
+        console.error('Gemini 分類逾時或錯誤:', e.message);
     }
     return 'ADD_TASK';
 }
@@ -273,6 +306,9 @@ async function handleDirectMessage(event, user, command, isGroup) {
             break;
         case 'QUERY_TASKS':
             await handleQueryTasks(event, user);
+            break;
+        case 'TASK_DETAIL':
+            await handleTaskDetail(event, user, command);
             break;
         case 'COMPLETE_TASK':
             await handleCompleteTask(event, user, command);
@@ -334,27 +370,24 @@ async function handleAddTask(event, user, command, isGroup) {
         const twNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
         const todayStr = twNow.toISOString().split('T')[0];
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-        const resp = await axios.post(url, {
-            contents: [{ parts: [{ text: `你是一個任務解析助手。請從以下訊息中提取任務資訊。
+        const geminiText = await callGemini(`你是一個任務解析助手。請從以下訊息中提取任務資訊。
 今天日期是 ${todayStr}（台灣時間）。
 
 規則：
-1. 如果有提到日期但沒有時間，預設時間為 09:00
+1. 如果有提到日期但沒有時間，預設時間為 10:00（上午十點）
 2. 如果有提到「明天」，日期為 ${todayStr} 的隔天
 3. 如果有提到「後天」，日期為 ${todayStr} 的兩天後
 4. end 預設為 start 的一小時後
 5. 時間格式使用 ISO 8601，時區為 +08:00
+6. title 請去掉「要去」「要」「去」等贅詞，保留核心事項名稱
 
 請回傳 JSON 格式（不要加 markdown 標記）：
 [{"title": "任務標題", "start": "2026-04-03T15:00:00+08:00", "end": "2026-04-03T16:00:00+08:00"}]
 
 如果無法解析出時間，start 和 end 都設為 null。
 
-使用者訊息：「${command}」` }] }]
-        });
+使用者訊息：「${command}」`);
 
-        const geminiText = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         console.log('[ADD_TASK] Gemini 回傳:', geminiText);
 
         let cleanJson = geminiText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -381,21 +414,20 @@ async function handleAddTask(event, user, command, isGroup) {
                 await db.collection('tasks').add(taskData);
 
                 let replyText = `✅ 已新增任務：${task.title}`;
-                if (task.start) replyText += `\n📅 ${task.start}`;
+                if (task.start) replyText += `\n📅 ${formatDateTimeFriendly(task.start)}`;
                 await reply(event, replyText);
             }
         } else {
             userContext[user.userId] = { tasks, command, timestamp: Date.now() };
             await db.collection('pending_proposals').doc(user.userId).set({
-                tasks,
-                command,
+                tasks, command,
                 createdAt: admin.firestore.FieldValue.serverTimestamp()
             });
 
             let confirmText = '📝 確認要新增以下任務嗎？\n\n';
             tasks.forEach((t, i) => {
                 confirmText += `${i + 1}. ${t.title}`;
-                if (t.start) confirmText += `\n   📅 ${t.start}`;
+                if (t.start) confirmText += `\n   📅 ${formatDateTimeFriendly(t.start)}`;
                 confirmText += '\n';
             });
             confirmText += '\n請回覆「確認」或「取消」';
@@ -403,7 +435,11 @@ async function handleAddTask(event, user, command, isGroup) {
         }
     } catch (err) {
         console.error('[ADD_TASK] 錯誤:', err);
-        await reply(event, '❌ 新增任務時發生錯誤，請稍後再試。');
+        if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+            await reply(event, '⏳ AI 處理中，請稍後再試一次。');
+        } else {
+            await reply(event, '❌ 新增任務時發生錯誤，請稍後再試。');
+        }
     }
 }
 
@@ -442,12 +478,12 @@ async function executeConfirmedTasks(event, user, tasks) {
         await db.collection('tasks').add(taskData);
 
         let replyText = `✅ 已新增任務：${task.title}`;
-        if (task.start) replyText += `\n📅 ${task.start}`;
+        if (task.start) replyText += `\n📅 ${formatDateTimeFriendly(task.start)}`;
         await reply(event, replyText);
     }
 }
 
-// ===== 查詢任務 =====
+// ===== 查詢任務列表 =====
 async function handleQueryTasks(event, user) {
     try {
         const snapshot = await db.collection('tasks')
@@ -460,7 +496,6 @@ async function handleQueryTasks(event, user) {
             return;
         }
 
-        // 手動排序，避免需要複合索引
         const docs = snapshot.docs.sort((a, b) => {
             const aTime = a.data().createdAt?.toMillis?.() || 0;
             const bTime = b.data().createdAt?.toMillis?.() || 0;
@@ -471,9 +506,15 @@ async function handleQueryTasks(event, user) {
         docs.slice(0, 20).forEach((doc, i) => {
             const t = doc.data();
             text += `${i + 1}. ${t.title}`;
-            if (t.start) text += `\n   📅 ${t.start}`;
+            if (t.start) text += `\n   📅 ${formatDateTimeFriendly(t.start)}`;
             text += '\n';
         });
+
+        if (docs.length > 20) {
+            text += `\n...還有 ${docs.length - 20} 筆，請到後台查看完整列表`;
+        }
+
+        text += '\n💡 輸入「助理 看一下[任務名稱]的內容」可查看詳情';
 
         userContext[user.userId] = {
             lastQueryTasks: docs.map(d => ({ id: d.id, ...d.data() })),
@@ -483,6 +524,78 @@ async function handleQueryTasks(event, user) {
     } catch (err) {
         console.error('查詢任務錯誤:', err);
         await reply(event, '❌ 查詢任務時發生錯誤。');
+    }
+}
+
+// ===== 查看單一任務詳情 =====
+async function handleTaskDetail(event, user, command) {
+    try {
+        // 提取關鍵字
+        const keyword = command
+            .replace(/看一下|查看|的內容|的詳情|的備註|的完整|的全部|內容|詳情|備註|完整|全部/g, '')
+            .trim();
+
+        if (!keyword) {
+            await reply(event, '❌ 請指定任務名稱。\n例：助理 看一下開會的內容');
+            return;
+        }
+
+        const snapshot = await db.collection('tasks')
+            .where('userId', '==', user.userId)
+            .where('completed', '==', false)
+            .get();
+
+        let targetDoc = null;
+        for (const doc of snapshot.docs) {
+            if (doc.data().title && doc.data().title.includes(keyword)) {
+                targetDoc = doc;
+                break;
+            }
+        }
+
+        if (!targetDoc) {
+            // 也搜尋已完成的
+            const allSnapshot = await db.collection('tasks')
+                .where('userId', '==', user.userId)
+                .get();
+            for (const doc of allSnapshot.docs) {
+                if (doc.data().title && doc.data().title.includes(keyword)) {
+                    targetDoc = doc;
+                    break;
+                }
+            }
+        }
+
+        if (!targetDoc) {
+            await reply(event, `❌ 找不到包含「${keyword}」的任務。`);
+            return;
+        }
+
+        const t = targetDoc.data();
+        let text = `📋 任務詳情：${t.title}\n`;
+        text += `━━━━━━━━━━━━━━\n`;
+        text += `📌 狀態：${t.completed ? '已完成' : '進行中'}\n`;
+        if (t.start) text += `📅 時間：${formatDateTimeFriendly(t.start)}`;
+        if (t.end) text += ` ~ ${formatDateTimeFriendly(t.end)}`;
+        if (t.start) text += '\n';
+        if (t.note) text += `📝 備註：${t.note}\n`;
+        if (t.source) {
+            const sourceMap = { group: '👥 群組', private: '💬 私訊', web: '📋 後台' };
+            text += `📎 來源：${sourceMap[t.source] || t.source}\n`;
+        }
+        if (t.createdAt) {
+            const created = t.createdAt.toDate ? t.createdAt.toDate() : new Date(t.createdAt.seconds * 1000);
+            text += `🕐 建立：${created.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}\n`;
+        }
+        if (t.completed && t.completedAt) {
+            const completed = t.completedAt.toDate ? t.completedAt.toDate() : new Date(t.completedAt.seconds * 1000);
+            text += `✅ 完成：${completed.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}\n`;
+        }
+
+        await reply(event, text);
+    } catch (err) {
+        console.error('查看詳情錯誤:', err);
+        await reply(event, '❌ 查看任務詳情時發生錯誤。');
     }
 }
 
@@ -556,17 +669,13 @@ async function handleModifyTask(event, user, command) {
         const twNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
         const todayStr = twNow.toISOString().split('T')[0];
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-        const resp = await axios.post(url, {
-            contents: [{ parts: [{ text: `你是一個任務修改解析助手。今天日期是 ${todayStr}。
+        const geminiText = await callGemini(`你是一個任務修改解析助手。今天日期是 ${todayStr}。
 請從以下訊息中提取：原始任務關鍵字、新的任務標題、新的時間。
 回傳 JSON：{"keyword": "原始關鍵字", "newTitle": "新標題或null", "newStart": "ISO時間或null", "newEnd": "ISO時間或null"}
 不要加 markdown 標記。
 
-使用者訊息：「${command}」` }] }]
-        });
+使用者訊息：「${command}」`);
 
-        const geminiText = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         let cleanJson = geminiText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         const parsed = JSON.parse(cleanJson);
 
@@ -594,10 +703,19 @@ async function handleModifyTask(event, user, command) {
         if (parsed.newEnd) updates.end = parsed.newEnd;
 
         await targetDoc.ref.update(updates);
-        await reply(event, `✅ 已修改任務：${parsed.newTitle || targetDoc.data().title}`);
+
+        const finalTitle = parsed.newTitle || targetDoc.data().title;
+        const finalStart = parsed.newStart || targetDoc.data().start;
+        let replyText = `✅ 已修改任務：${finalTitle}`;
+        if (finalStart) replyText += `\n📅 ${formatDateTimeFriendly(finalStart)}`;
+        await reply(event, replyText);
     } catch (err) {
         console.error('修改任務錯誤:', err);
-        await reply(event, '❌ 修改任務時發生錯誤。');
+        if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+            await reply(event, '⏳ AI 處理中，請稍後再試一次。');
+        } else {
+            await reply(event, '❌ 修改任務時發生錯誤。');
+        }
     }
 }
 
@@ -616,6 +734,7 @@ async function handleFileQuery(event, user, command) {
         if (keyword) {
             files = files.filter(f =>
                 (f.fileName && f.fileName.includes(keyword)) ||
+                (f.name && f.name.includes(keyword)) ||
                 (f.description && f.description.includes(keyword))
             );
         }
@@ -627,7 +746,7 @@ async function handleFileQuery(event, user, command) {
 
         let text = `📁 共享檔案${keyword ? `（關鍵字：${keyword}）` : ''}：\n\n`;
         files.slice(0, 10).forEach((f, i) => {
-            text += `${i + 1}. ${f.fileName || '未命名'}`;
+            text += `${i + 1}. ${f.name || f.fileName || '未命名'}`;
             if (f.description) text += `\n   📝 ${f.description}`;
             if (f.url) text += `\n   🔗 ${f.url}`;
             text += '\n';
@@ -710,7 +829,7 @@ async function handleViewOtherTasks(event, command) {
     taskSnapshot.docs.forEach((doc, i) => {
         const t = doc.data();
         text += `${i + 1}. ${t.title}`;
-        if (t.start) text += `\n   📅 ${t.start}`;
+        if (t.start) text += `\n   📅 ${formatDateTimeFriendly(t.start)}`;
         text += '\n';
     });
     await reply(event, text);
@@ -719,15 +838,15 @@ async function handleViewOtherTasks(event, command) {
 // ===== 一般聊天 =====
 async function handleChat(event, user, command) {
     try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-        const resp = await axios.post(url, {
-            contents: [{ parts: [{ text: `你是 MoAn AdTech Bot，一個友善的業務助理。請用繁體中文回覆。\n\n使用者說：「${command}」` }] }]
-        });
-        const answer = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '抱歉，我目前無法回應。';
-        await reply(event, answer);
+        const answer = await callGemini(`你是 MoAn AdTech Bot，一個友善的業務助理。請用繁體中文回覆。\n\n使用者說：「${command}」`);
+        await reply(event, answer || '抱歉，我目前無法回應。');
     } catch (err) {
         console.error('聊天錯誤:', err);
-        await reply(event, '抱歉，我目前無法回應，請稍後再試。');
+        if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+            await reply(event, '⏳ AI 正在思考中，請稍後再問一次。');
+        } else {
+            await reply(event, '抱歉，我目前無法回應，請稍後再試。');
+        }
     }
 }
 
@@ -760,7 +879,7 @@ async function init() {
             systemEnabled = configDoc.data().enabled !== false;
         }
         console.log('[INIT] 系統狀態:', systemEnabled ? '啟用中' : '已停用');
-        console.log('[INIT] ✅ MoAn Bot v4.4 初始化完成（無行事曆同步）');
+        console.log('[INIT] ✅ MoAn Bot v4.5 初始化完成');
     } catch (err) {
         console.error('[INIT] 初始化錯誤:', err.message);
     }
